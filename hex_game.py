@@ -26,7 +26,7 @@ import os
 import pygame
 
 from hex_board import (ROWS, COLS, EMPTY, RED, BLUE, HexBoard, cell_name)
-from hex_ai import BasicAI
+from ai.neural_ai import NeuralMCTSAI
 
 # ---------------------------- 常量 ----------------------------
 SIZE = 28                           # 六边形边长（像素）
@@ -173,7 +173,15 @@ class HexGame:
         """在开始画面选定模式并开始第一局。"""
         self.mode = mode
         self.human = {2: 1, 3: 2}.get(mode)   # 玩家执红→玩家1，执蓝→玩家2
-        self.ai = BasicAI() if mode in (2, 3, 4) else None
+        if mode in (2, 3, 4):
+            self.ai = NeuralMCTSAI(
+            model_path="checkpoints/hex_model_v5.pt",
+            simulations=100,
+            c_puct=1.5
+        )
+        else:
+            self.ai = None
+
         self.state = S_PLAY
 
     def player_of(self, color):
@@ -213,6 +221,7 @@ class HexGame:
         return (q, r) if self.board.in_range(q, r) else None
 
     def on_click(self, pos):
+        print("鼠标点击:", pos, "当前状态:", self.state, "当前模式:", self.mode)
         if self.state == S_START:
             for rect, mode in self.mode_buttons:
                 if rect.collidepoint(pos):
