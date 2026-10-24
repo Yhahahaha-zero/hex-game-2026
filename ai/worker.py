@@ -19,6 +19,7 @@ class AIResult:
     init_error: Optional[str] = None
     inference_error: Optional[str] = None
     fallback_error: Optional[str] = None
+    search_stats: tuple = ()
 
     @property
     def ok(self):
@@ -132,6 +133,7 @@ class AIWorker:
             phase="done" if fallback_error is None else "error",
             best_move=move,
         )
+        progress = self.progress
         self._result = AIResult(
             request_id=self.request_id,
             color=self.color,
@@ -141,6 +143,7 @@ class AIWorker:
             init_error=init_error,
             inference_error=inference_error,
             fallback_error=fallback_error,
+            search_stats=tuple(progress.get("candidates", ())),
         )
 
     def _legal_move(self, move):

@@ -1,8 +1,8 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """右侧下棋记录、双计时器和复盘状态面板。"""
 import pygame
 
-from hex_board import BLUE, RED
+from hex_board import BLUE, RED, cell_name
 from ui.board_renderer import BOARD_W, DIM_CLR, GOLD, TEXT_CLR, WINDOW_H
 
 
@@ -21,15 +21,16 @@ class HistoryPanel:
     def __init__(self):
         self.title_font = None
         self.body_font = None
-        self.save_button = pygame.Rect(BOARD_W + 12, 132, 106, 32)
-        self.replay_button = pygame.Rect(BOARD_W + 130, 132, 106, 32)
+        self.save_button = pygame.Rect(BOARD_W + 12, 132, 68, 32)
+        self.export_button = pygame.Rect(BOARD_W + 88, 132, 68, 32)
+        self.replay_button = pygame.Rect(BOARD_W + 164, 132, 70, 32)
 
     def set_fonts(self, title_font, body_font):
         self.title_font = title_font
         self.body_font = body_font
 
     def draw(self, screen, moves, game_no, timers=None, ai_status="",
-             replay_enabled=True, replay_mode=False):
+             replay_enabled=True, replay_mode=False, search_stats=None):
         pygame.draw.rect(screen, PANEL_BG, (BOARD_W, 0, PANEL_W, WINDOW_H))
         pygame.draw.line(screen, PANEL_LINE, (BOARD_W, 0), (BOARD_W, WINDOW_H), 2)
         self._text(screen, "下棋记录", (BOARD_W + 16, 14), self.title_font, TEXT_CLR)
@@ -43,7 +44,7 @@ class HistoryPanel:
         pygame.draw.line(screen, PANEL_LINE, (BOARD_W + 12, 200),
                          (BOARD_W + PANEL_W - 12, 200), 1)
 
-        visible = max(1, (WINDOW_H - 330) // 24)
+        visible = max(1, (WINDOW_H - 500) // 24)
         rows = list(moves)[-visible:]
         y = 208
         for index, move in enumerate(rows):
@@ -60,6 +61,8 @@ class HistoryPanel:
 
         if not rows:
             self._text(screen, "尚无落子", (BOARD_W + 16, 212), self.body_font, DIM_CLR)
+        if search_stats:
+            self._draw_mcts_chart(screen, search_stats)
         if ai_status:
             self._draw_status(screen, ai_status)
 
@@ -72,8 +75,9 @@ class HistoryPanel:
     def _draw_buttons(self, screen, replay_enabled, replay_mode):
         mouse = pygame.mouse.get_pos()
         for rect, label, enabled in (
-            (self.save_button, "保存 JSON", True),
-            (self.replay_button, "返回对局" if replay_mode else "复盘上一局", replay_enabled),
+            (self.save_button, "保存", True),
+            (self.export_button, "报告", True),
+            (self.replay_button, "返回" if replay_mode else "复盘", replay_enabled),
         ):
             color = BUTTON_HOVER if enabled and rect.collidepoint(mouse) else BUTTON_BG
             if not enabled:
@@ -82,6 +86,23 @@ class HistoryPanel:
             text_color = TEXT_CLR if enabled else DIM_CLR
             surface = self.body_font.render(label, True, text_color)
             screen.blit(surface, surface.get_rect(center=rect.center))
+
+    def _draw_mcts_chart(self, screen, search_stats):
+        top = WINDOW_H - 285
+        self._text(screen, "MCTS 候选统计", (BOARD_W + 16, top), self.body_font, GOLD)
+        max_visits = max((int(item.get("visits", 0)) for item in search_stats), default=1)
+        max_visits = max(1, max_visits)
+        y = top + 28
+        for item in list(search_stats)[:5]:
+            move = item.get("move")
+            label = cell_name(*move) if move else "-"
+            visits = int(item.get("visits", 0))
+            self._text(screen, f"{label} {visits:>3}", (BOARD_W + 16, y), self.body_font, TEXT_CLR)
+            pygame.draw.rect(screen, (50, 55, 68), (BOARD_W + 92, y + 3, 122, 12), border_radius=2)
+            width = int(122 * visits / max_visits)
+            if width:
+                pygame.draw.rect(screen, (70, 130, 230), (BOARD_W + 92, y + 3, width, 12), border_radius=2)
+            y += 24
 
     def _draw_status(self, screen, status):
         status_y = WINDOW_H - 94

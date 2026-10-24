@@ -9,6 +9,7 @@ from game_mode import GameMode
 from game_records import (ReplaySession, latest_record, load_record,
                           save_match_record)
 from game_timer import DualGameTimer
+from report_export import capture_screen, export_report_bundle
 from hex_board import BLUE, IllegalMoveError, RED, cell_name
 from hex_engine import (HexEngine, STATE_GAME_OVER, STATE_MATCH_OVER,
                         STATE_PLAYING)
@@ -61,7 +62,8 @@ class HexGame:
 
     def __init__(self):
         pygame.init()
-        self.screen = pygame.display.set_mode((WINDOW_W, WINDOW_H))
+        self.window = pygame.display.set_mode(self._initial_window_size(), pygame.RESIZABLE)
+        self.screen = pygame.Surface((WINDOW_W, WINDOW_H)).convert()
         pygame.display.set_caption("海克斯棋 Hex —— 红连上下，蓝连左右")
         self.clock = pygame.time.Clock()
         self.font_xs = get_font(15)
@@ -78,11 +80,13 @@ class HexGame:
         self.ai_status_message = ""
         self.ai_request_id = 0
         self.ai_worker = None
+        self.last_search_stats = ()
         self.mode_buttons = []
         self.panel_message = ""
         self.replay = None
         self.replay_return_state = S_PLAY
         self.last_record_path = latest_record()
+        self.last_report_paths = None
         self.engine = HexEngine("玩家1", "玩家2")
         self.reset_match(show_intro=True)
 
@@ -90,6 +94,35 @@ class HexGame:
     @staticmethod
     def _player_labels():
         return {"玩家1": "玩家1", "玩家2": "玩家2"}
+
+    @staticmethod
+    def _initial_window_size():
+        info = pygame.display.Info()
+        available_w = max(560, (info.current_w or WINDOW_W) - 40)
+        available_h = max(420, (info.current_h or WINDOW_H) - 80)
+        scale = min(1.0, available_w / WINDOW_W, available_h / WINDOW_H)
+        scale = max(0.35, scale)
+        return int(WINDOW_W * scale), int(WINDOW_H * scale)
+
+    def _resize_window(self, width, height):
+        width = max(480, int(width))
+        height = max(360, int(height))
+        scale = min(width / WINDOW_W, height / WINDOW_H)
+        self.window = pygame.display.set_mode(
+            (int(WINDOW_W * scale), int(WINDOW_H * scale)), pygame.RESIZABLE
+        )
+
+    def _to_canvas(self, pos):
+        width, height = self.window.get_size()
+        return (
+            int(pos[0] * WINDOW_W / max(1, width)),
+            int(pos[1] * WINDOW_H / max(1, height)),
+        )
+
+    def _present(self):
+        scaled = pygame.transform.smoothscale(self.screen, self.window.get_size())
+        self.window.blit(scaled, (0, 0))
+        pygame.display.flip()
 
     def _sync_engine(self):
         self.board = self.engine.board
@@ -116,6 +149,7 @@ class HexGame:
         self.ai_act_at = 0
         self.ai_request_id += 1
         self.ai_worker = None
+        self.last_search_stats = ()
 
     def reset_match(self, show_intro=False):
         self.engine = HexEngine("玩家1", "玩家2")
@@ -224,6 +258,30 @@ class HexGame:
             self.replay.previous()
 
     # ---------- 输入 ----------
+    def export_report(self):
+        search_stats = self.last_search_stats
+        if self.ai_worker is not None:
+            search_stats = tuple(self.ai_worker.progress.get("candidates", ()))
+        try:
+            self.last_report_paths = export_report_bundle(
+                self.engine,
+                self.mode,
+                self._player_labels(),
+                timer=self.timer,
+                screen=self.screen,
+                search_stats=search_stats,
+            )
+            self.panel_message = f"报告已导出：{self.last_report_paths['directory'].name}"
+        except Exception as exc:
+            self.panel_message = f"报告导出失败：{exc}"
+
+    def save_screenshot(self):
+        try:
+            path = capture_screen(self.screen)
+            self.panel_message = f"截图已保存：{path.name}"
+        except Exception as exc:
+            self.panel_message = f"截图失败：{exc}"
+
     def pick(self, pos):
         q, r = pixel_to_hex(*pos)
         return (q, r) if self.board.in_range(q, r) else None
@@ -233,6 +291,9 @@ class HexGame:
             return False
         if self.history_panel.save_button.collidepoint(pos):
             self.save_record()
+            return True
+        if self.history_panel.export_button.collidepoint(pos):
+            self.export_report()
             return True
         if self.history_panel.replay_button.collidepoint(pos):
             if self.state == S_REPLAY:
@@ -312,6 +373,7 @@ class HexGame:
             return
         if result.ai is not None:
             self.ai = result.ai
+        self.last_search_stats = tuple(result.search_stats or ())
         if result.init_error:
             print(f"[AI] {result.init_error}")
             self.ai_status_message = "模型不可用，已回退基础 AI"
@@ -387,6 +449,10 @@ class HexGame:
                             self.quit()
                     elif ctrl and event.key == pygame.K_s:
                         self.save_record()
+                    elif ctrl and event.key == pygame.K_e:
+                        self.export_report()
+                    elif ctrl and event.key == pygame.K_p:
+                        self.save_screenshot()
                     elif event.key == pygame.K_F5:
                         self.start_replay()
                     elif self.state == S_REPLAY:
@@ -398,9 +464,11 @@ class HexGame:
                         self.on_space()
                     elif self.state == S_START and pygame.K_1 <= event.key <= pygame.K_4:
                         self.start_mode(event.key - pygame.K_1 + 1)
+                elif event.type == pygame.VIDEORESIZE:
+                    self._resize_window(event.w, event.h)
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                    self.on_click(event.pos)
-            self.hover = self.pick(pygame.mouse.get_pos())
+                    self.on_click(self._to_canvas(event.pos))
+            self.hover = self.pick(self._to_canvas(pygame.mouse.get_pos()))
             if self.state == S_PLAY and not self.paused:
                 self.update_ai()
             elif (self.state == S_WIN and self.mode == GameMode.AI_VS_AI
@@ -408,7 +476,7 @@ class HexGame:
                   and pygame.time.get_ticks() - self.win_at > WATCH_AUTO_MS):
                 self.advance_match()
             self.draw()
-            pygame.display.flip()
+            self._present()
             self.clock.tick(60)
 
     # ---------- 绘制 ----------
@@ -436,6 +504,12 @@ class HexGame:
             moves = self.replay.current_moves() if replaying else self.engine.game_moves(self.game_no)
             game_no = self.replay.game_no if replaying else self.game_no
             status = self._panel_status()
+            if replaying:
+                search_stats = ()
+            elif self.ai_worker is not None:
+                search_stats = tuple(self.ai_worker.progress.get("candidates", ()))
+            else:
+                search_stats = self.last_search_stats
             self.history_panel.draw(
                 self.screen,
                 moves,
@@ -443,6 +517,7 @@ class HexGame:
                 timers=self.timer.formatted(),
                 ai_status=status,
                 replay_mode=replaying,
+                search_stats=search_stats,
             )
         self.draw_hud()
         if self.state == S_START:
@@ -493,8 +568,8 @@ class HexGame:
         if self.hover:
             self.blit(f"悬停：{cell_name(*self.hover)}",
                       (12, WINDOW_H - 28), self.font_s, DIM_CLR)
-        self.blit("Ctrl+S=保存  F5=复盘  Esc=退出", (BOARD_W - 12, WINDOW_H - 24),
-                  self.font_s, DIM_CLR, anchor="bottomright")
+        self.blit("Ctrl+S/E/P  F5=复盘  Esc=退出", (BOARD_W - 12, WINDOW_H - 24),
+                  self.font_xs, DIM_CLR, anchor="bottomright")
 
     def draw_start_screen(self):
         veil = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)

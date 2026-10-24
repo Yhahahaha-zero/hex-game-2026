@@ -28,7 +28,12 @@ class ProgressAI:
 
     def choose_move(self, board, player):
         if self.callback:
-            self.callback({"completed": 3, "total": 10, "best_move": (5, 5)})
+            self.callback({
+                "completed": 3,
+                "total": 10,
+                "best_move": (5, 5),
+                "candidates": [{"move": (5, 5), "visits": 3}],
+            })
         return (5, 5), "progress"
 
 
@@ -78,6 +83,7 @@ class AIWorkerTest(unittest.TestCase):
         self.assertEqual(progress["total"], 10)
         self.assertEqual(progress["best_move"], (5, 5))
         self.assertEqual(progress["phase"], "done")
+        self.assertEqual(worker.result.search_stats[0]["move"], (5, 5))
 
     def test_invalid_ai_move_triggers_fallback(self):
         worker = AIWorker(HexBoard(), RED, 9, ai=StaticAI(move=(99, 99)))

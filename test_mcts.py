@@ -23,6 +23,21 @@ class MCTSTest(unittest.TestCase):
         self.assertEqual(float(state[1, 10, 10]), 1.0)
         self.assertTrue(torch.all(state[2] == 1.0))
 
+    def test_mcts_search_result_contains_candidate_stats(self):
+        import torch
+        from ai.mcts import MCTS
+        from ai.search_result import SearchResult
+
+        class UniformModel(torch.nn.Module):
+            def forward(self, state):
+                return torch.zeros(state.shape[0], 121), torch.zeros(state.shape[0])
+
+        result = MCTS(UniformModel(), simulations=10, time_limit_ms=1000).search_result(HexBoard(), RED)
+        self.assertIsInstance(result, SearchResult)
+        self.assertEqual(result.simulations, 10)
+        self.assertGreater(len(result.children), 0)
+        self.assertEqual(result.move, result.best_move)
+
     def test_mcts_reports_progress(self):
         import torch
         from ai.mcts import MCTS

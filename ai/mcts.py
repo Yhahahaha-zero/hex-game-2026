@@ -6,6 +6,7 @@ import time
 import torch
 
 from ai.encode import encode_board
+from ai.search_result import ChildStat, SearchResult
 from hex_board import BLUE, COLS, EMPTY, RED, ROWS
 
 
@@ -153,7 +154,20 @@ class MCTS:
             value = -value
             current = current.parent
 
-    def search(self, board, player, on_progress=None):
+    @staticmethod
+    def _candidate_stats(root):
+        stats = [
+            ChildStat(
+                move=move,
+                visits=child.visit_count,
+                prior=child.prior,
+                value=child.value,
+            )
+            for move, child in root.children.items()
+        ]
+        return tuple(sorted(stats, key=lambda item: (item.visits, item.prior), reverse=True))
+
+    def search_result(self, board, player, on_progress=None):
         started = time.perf_counter()
         deadline = started + self.time_limit_ms / 1000.0
         root = MCTSNode(board=self.copy_board(board), player=player)
@@ -164,15 +178,15 @@ class MCTS:
         def emit_progress(completed):
             if on_progress is None:
                 return
-            best = None
-            if root.children:
-                best = max(root.children, key=lambda move: root.children[move].visit_count)
+            candidates = self._candidate_stats(root)
+            best = candidates[0].move if candidates else None
             on_progress({
                 "phase": "searching",
                 "completed": completed,
                 "total": self.simulations,
                 "elapsed_ms": (time.perf_counter() - started) * 1000,
                 "best_move": best,
+                "candidates": [item.as_dict() for item in candidates[:5]],
             })
 
         emit_progress(0)
@@ -185,11 +199,21 @@ class MCTS:
             if completed == 1 or completed % 10 == 0:
                 emit_progress(completed)
 
-        best_move = max(
-            root.children,
-            key=lambda move: root.children[move].visit_count,
-        )
+        candidates = self._candidate_stats(root)
+        best = candidates[0]
         self.last_simulations = completed
         self.last_elapsed_ms = (time.perf_counter() - started) * 1000
         emit_progress(completed)
-        return best_move, root.children[best_move].visit_count, root
+        return SearchResult(
+            move=best.move,
+            visits=best.visits,
+            simulations=completed,
+            elapsed_ms=self.last_elapsed_ms,
+            children=candidates,
+            root=root,
+        )
+
+    def search(self, board, player, on_progress=None):
+        """???????? ``(move, visits, root)``?"""
+        result = self.search_result(board, player, on_progress=on_progress)
+        return result.move, result.visits, result.root
