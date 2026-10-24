@@ -1,0 +1,4 @@
+# Python 3.13 及以下用经典 pygame
+pygame>=2.6
+# Python 3.14 及以上经典 pygame 无安装包，请改用（导入名同为 pygame）：
+#   py -m pip install pygame-ce>=2.5.5
