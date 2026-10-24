@@ -1,4 +1,4 @@
-# 海克斯棋（Hex）
+﻿# 海克斯棋（Hex）
 
 双人落子类游戏。11×11 六边形棋盘，红方连通上下红色边界获胜，蓝方连通左右蓝色边界获胜。单局无和棋，每场两局、双方轮流先手（红方每局先行）。坐标先纵后横，如 `5C` = 第 5 行第 C 列。
 
@@ -96,7 +96,7 @@ check.bat
 也可单独运行以下命令：
 ```bash
 py hex_game_test.py
-py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py
+py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py test_ai_worker.py test_ui.py
 ```
 
 ## AI 对比评测
@@ -143,10 +143,15 @@ python ai/train_v5.py --games 500 --seed 20261024 --output checkpoints/hex_model
 | `ai/mcts.py` | PUCT MCTS、合法动作掩码和单步时间上限 |
 | `ai/model_v5.py` | HexNetV5 网络结构和动作空间工具 |
 | `ai/train_v5.py` | 可复现 V5 自对弈训练与模型元数据保存 |
+| `ai/worker.py` | 后台 AI 线程、回退策略和 AIResult |
+| `ui/board_renderer.py` | 棋盘几何、棋子、坐标和胜利路径绘制 |
+| `ui/history_panel.py` | 右侧下棋记录和 AI 状态面板 |
 | `requirements-ai.txt` | 可选 PyTorch/NumPy 依赖 |
 | `checkpoints/README.md` | 模型权重提交和版本管理说明 |
 | `test_ai.py` | AI 契约、回退和战术测试 |
 | `test_mcts.py` | 编码、网络和 MCTS 测试（无 torch 时跳过） |
+| `test_ai_worker.py` | AI 后台线程、异常和回退测试 |
+| `test_ui.py` | 渲染几何、窗口布局和引擎集成测试 |
 | `hex_match.py` | 自动对局：胜率统计、对局记录、失败棋局复现、耗时统计 |
 | `hex_game_test.py` | 自测脚本（7 组） |
 | `hex_engine.py` | 对局引擎：回合、判胜、两局换色、比分与历史记录 |

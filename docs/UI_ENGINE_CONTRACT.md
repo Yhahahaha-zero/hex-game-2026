@@ -153,4 +153,10 @@ engine.state
 
 ## 8. 当前集成状态
 
-`HexEngine` 统一接口和单元测试已经完成。`hex_game.py` 暂不修改，等待页面队友版本稳定后再按本契约接入。
+`hex_game.py` 已正式接入 `HexEngine`：
+
+- 页面落子统一调用 `play_move()`；
+- 换手、判胜、比分和两局状态由引擎维护；
+- 棋盘绘制已拆分到 `ui/board_renderer.py`；
+- AI 线程已拆分到 `ai/worker.py`；
+- 右侧下棋记录已由 `ui/history_panel.py` 渲染。
