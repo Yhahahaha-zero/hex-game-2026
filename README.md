@@ -85,8 +85,19 @@ check.bat
 也可单独运行以下命令：
 ```bash
 py hex_game_test.py
-py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py
+py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py
 ```
+
+## AI 对比评测
+
+固定随机种子并采用 AB/BA 配对交换红蓝：
+
+```bash
+python tools/benchmark_ai.py --ai-a basic --ai-b random --games 500 --repeats 3
+```
+
+自定义 AI 使用 `module:Class` 或 `path/to/file.py:Class`。结果写入 `benchmark_results/`，包含 JSON、汇总 CSV 和逐局 CSV。
+
 
 ## 文件说明
 
@@ -102,5 +113,7 @@ py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py
 | `test_hex_board.py` | 棋盘坐标、非法输入和兼容接口单元测试（9 项） |
 | `check.bat` | 一键运行游戏自测和全部单元测试 |
 | `test_hex_match.py` | 自动对局、记录和复盘回归测试（6 项） |
+| `tools/benchmark_ai.py` | AI 固定种子、AB/BA 配对评测及 CSV/JSON 输出 |
+| `test_benchmark_ai.py` | AI 评测工具回归测试（5 项） |
 | `docs/UI_ENGINE_CONTRACT.md` | 页面层与引擎层的接口和职责契约 |
 | `hex_records.json` | 对局记录（自动生成，可删除） |

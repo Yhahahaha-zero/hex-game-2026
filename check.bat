@@ -52,7 +52,7 @@ echo [1/2] Running game self-test...
 if errorlevel 1 goto :fail
 
 echo [2/2] Running unit tests...
-"%PYTHON_EXE%" %PYTHON_ARGS% -B -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py
+"%PYTHON_EXE%" %PYTHON_ARGS% -B -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py
 if errorlevel 1 goto :fail
 
 echo [OK] All checks passed.
