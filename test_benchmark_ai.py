@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """AI 对比评测工具的回归测试。"""
 import contextlib
 import csv
@@ -46,6 +46,9 @@ class BenchmarkAITest(unittest.TestCase):
             self.assertEqual(document["summary"]["ai_a_red_games"], 4)
             self.assertEqual(document["summary"]["ai_a_blue_games"], 4)
             self.assertEqual(len(document["repeats"]), 2)
+            self.assertGreaterEqual(document["summary"]["ai_a_average_load_ms"], 0)
+            self.assertGreaterEqual(document["summary"]["ai_b_average_load_ms"], 0)
+            self.assertGreaterEqual(document["repeats"][0]["ai_a_load_ms"], 0)
 
             orientations = [game["orientation"] for game in document["games"]]
             self.assertEqual(orientations.count("AB"), 4)

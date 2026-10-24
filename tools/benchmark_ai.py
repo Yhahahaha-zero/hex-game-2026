@@ -254,8 +254,12 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
     for repeat_index in range(repeats):
         repeat_no = repeat_index + 1
         repeat_seed = seed + repeat_index * 1_000_003
+        load_started = time.perf_counter()
         ai_a = factory_a()
+        ai_a_load_ms = (time.perf_counter() - load_started) * 1000
+        load_started = time.perf_counter()
         ai_b = factory_b()
+        ai_b_load_ms = (time.perf_counter() - load_started) * 1000
         repeat_games = []
         games_per_orientation = games // 2
 
@@ -289,12 +293,18 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
 
         all_games.extend(repeat_games)
         summary = summarize_games(repeat_games, ai_a_spec, ai_b_spec)
-        summary.update({"repeat": repeat_no, "seed": repeat_seed})
+        summary.update({"repeat": repeat_no, "seed": repeat_seed,
+                        "ai_a_load_ms": round(ai_a_load_ms, 3),
+                        "ai_b_load_ms": round(ai_b_load_ms, 3)})
         repeat_summaries.append(summary)
         if not quiet:
             print()
 
     overall = summarize_games(all_games, ai_a_spec, ai_b_spec)
+    overall["ai_a_average_load_ms"] = round(_mean(
+        [summary["ai_a_load_ms"] for summary in repeat_summaries]), 3)
+    overall["ai_b_average_load_ms"] = round(_mean(
+        [summary["ai_b_load_ms"] for summary in repeat_summaries]), 3)
     overall["elapsed_seconds"] = round(time.perf_counter() - total_started, 3)
     document = {
         "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -383,8 +393,10 @@ def _print_summary(summary):
           f"({summary['ai_a_blue_wins']}/{summary['ai_a_blue_games']})")
     print(f"红方胜率：{summary['red_win_rate']:.2f}%")
     print(f"平均手数：{summary['average_moves']:.2f}")
+    print(f"AI A 平均加载耗时：{summary['ai_a_average_load_ms']:.3f} ms")
     print(f"AI A 平均/最大耗时：{summary['ai_a_average_move_ms']:.3f} / "
           f"{summary['ai_a_max_move_ms']:.3f} ms")
+    print(f"AI B 平均加载耗时：{summary['ai_b_average_load_ms']:.3f} ms")
     print(f"AI B 平均/最大耗时：{summary['ai_b_average_move_ms']:.3f} / "
           f"{summary['ai_b_max_move_ms']:.3f} ms")
 

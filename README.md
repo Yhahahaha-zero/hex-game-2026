@@ -90,6 +90,8 @@ py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_be
 
 ## AI 对比评测
 
+接口、模型文件和回退规则见 `docs/AI_INTERFACE.md`。
+
 固定随机种子并采用 AB/BA 配对交换红蓝：
 
 ```bash
@@ -115,5 +117,6 @@ python tools/benchmark_ai.py --ai-a basic --ai-b random --games 500 --repeats 3
 | `test_hex_match.py` | 自动对局、记录和复盘回归测试（6 项） |
 | `tools/benchmark_ai.py` | AI 固定种子、AB/BA 配对评测及 CSV/JSON 输出 |
 | `test_benchmark_ai.py` | AI 评测工具回归测试（5 项） |
+| `docs/AI_INTERFACE.md` | AI 输入输出、模型加载、设备、耗时、种子和回退契约 |
 | `docs/UI_ENGINE_CONTRACT.md` | 页面层与引擎层的接口和职责契约 |
 | `hex_records.json` | 对局记录（自动生成，可删除） |
