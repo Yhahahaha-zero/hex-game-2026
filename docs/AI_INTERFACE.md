@@ -1,4 +1,4 @@
-﻿# AI 接口契约
+# AI 接口契约
 
 本文档约定海克斯棋项目所有 AI（基础 AI、随机 AI、训练模型 AI）的统一接口和运行边界。页面、自动对局和评测工具只依赖本契约，不依赖具体模型实现。
 
@@ -352,7 +352,29 @@ python tools/benchmark_ai.py \
   --repeats 3
 ```
 
-## 12. 验收清单
+## 12. 当前项目实现
+
+- 模型入口：`ai.neural_ai.NeuralMCTSAI`；
+- 页面回退工厂：`ai.neural_ai.create_ai_with_fallback()`；
+- 默认权重：`checkpoints/hex_model_v5.pt`；
+- 默认设备：有 CUDA 时使用 CUDA，否则使用 CPU；
+- 默认单步上限：`200 ms`；
+- 默认最大模拟次数：`100`；
+- 页面通过后台线程加载和推理，不阻塞 pygame 主循环；
+- torch、权重或推理失败时回退 `BasicAI`，并在界面显示回退状态；
+- 严格 benchmark 不回退，异常会写入结果；
+- 可选依赖：`requirements-ai.txt`；
+- 当前附带 `checkpoints/hex_model_v5.pt` 为训练 10 局的集成验证参考模型，正式比赛前应替换；
+- 训练入口：`python ai/train_v5.py --games 500 --seed 20261024`。
+
+### 神经 AI 评测命令
+
+```bash
+python tools/benchmark_ai.py --ai-a basic --ai-b neural --games 1000 --repeats 3 --seed 20261024
+```
+
+## 13. 验收清单
+
 
 - `choose_move(board, player)` 返回 `((q, r), reason)`；
 - 返回坐标始终在棋盘内且为空位；

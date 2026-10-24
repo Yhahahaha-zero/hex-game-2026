@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Hex AI 对比评测工具。
 
 支持：
@@ -36,7 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from hex_ai import create_ai
 from hex_match import play_game
 
-BUILTIN_AIS = ("basic", "random")
+BUILTIN_AIS = ("basic", "random", "neural")
 DEFAULT_OUTPUT_DIR = "benchmark_results"
 DEFAULT_GAMES = 500
 DEFAULT_SEED = 20261024
@@ -52,7 +52,13 @@ def _safe_filename(name):
 def load_ai_factory(spec):
     """返回无参 AI 工厂。支持内置名、module:Class 和 file.py:Class。"""
     spec = str(spec).strip()
-    if spec in BUILTIN_AIS:
+    if spec == "neural":
+        def neural_factory():
+            from ai.neural_ai import NeuralMCTSAI
+            return NeuralMCTSAI()
+        return neural_factory
+
+    if spec in ("basic", "random"):
         return lambda: create_ai(spec)
 
     if ":" not in spec:
@@ -106,6 +112,16 @@ def seed_ai(ai, seed):
 
 def _ai_name(ai):
     return str(getattr(ai, "name", type(ai).__name__))
+
+
+def _ai_metadata(ai):
+    return {
+        "name": _ai_name(ai),
+        "version": str(getattr(ai, "version", "")),
+        "model_path": str(getattr(ai, "model_path", "")),
+        "device": str(getattr(ai, "device", "")),
+        "time_limit_ms": getattr(ai, "time_limit_ms", None),
+    }
 
 
 def _wilson_interval(wins, games, z=1.96):
@@ -249,6 +265,8 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
 
     all_games = []
     repeat_summaries = []
+    metadata_a = None
+    metadata_b = None
     total_started = time.perf_counter()
 
     for repeat_index in range(repeats):
@@ -260,6 +278,9 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
         load_started = time.perf_counter()
         ai_b = factory_b()
         ai_b_load_ms = (time.perf_counter() - load_started) * 1000
+        if metadata_a is None:
+            metadata_a = _ai_metadata(ai_a)
+            metadata_b = _ai_metadata(ai_b)
         repeat_games = []
         games_per_orientation = games // 2
 
@@ -316,6 +337,8 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
             "base_seed": seed,
             "pairing": "AB/BA with colors swapped",
             "total_games": games * repeats,
+            "ai_a_metadata": metadata_a,
+            "ai_b_metadata": metadata_b,
         },
         "summary": overall,
         "repeats": repeat_summaries,
@@ -406,9 +429,9 @@ def main(argv=None):
         description="Hex AI 固定种子、AB/BA 配对对比评测",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--ai-a", default="basic",
-                        help="AI A：basic、random 或 module:Class")
+                        help="AI A：basic、random、neural 或 module:Class")
     parser.add_argument("--ai-b", default="random",
-                        help="AI B：basic、random 或 module:Class")
+                        help="AI B：basic、random、neural 或 module:Class")
     parser.add_argument("--games", type=int, default=DEFAULT_GAMES,
                         help="每轮总对局数，必须为偶数")
     parser.add_argument("--repeats", type=int, default=1,

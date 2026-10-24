@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 海克斯棋（Hex）—— 双人落子类游戏（pygame 图形版）
 
@@ -22,11 +22,11 @@
 
 import math
 import os
+import threading
 
 import pygame
 
 from hex_board import (ROWS, COLS, EMPTY, RED, BLUE, HexBoard, cell_name)
-from ai.neural_ai import NeuralMCTSAI
 
 # ---------------------------- 常量 ----------------------------
 SIZE = 28                           # 六边形边长（像素）
@@ -142,6 +142,10 @@ class HexGame:
         self.mode = 0                   # 0=未选择
         self.human = None               # 人机模式中人类对应的玩家编号（1/2）
         self.ai = None
+        self.ai_status_message = ""
+        self.ai_request_id = 0
+        self.ai_thread = None
+        self.ai_result = None
         self.mode_buttons = []
         self.reset_match(show_intro=True)
 
@@ -167,22 +171,22 @@ class HexGame:
         self.pending_move = None        # AI 已算好、待演示的着法
         self.pending_reason = None
         self.ai_act_at = 0
+        self.ai_request_id += 1
+        self.ai_thread = None
+        self.ai_result = None
         self.state = S_PLAY
 
     def start_mode(self, mode):
         """在开始画面选定模式并开始第一局。"""
         self.mode = mode
-        self.human = {2: 1, 3: 2}.get(mode)   # 玩家执红→玩家1，执蓝→玩家2
-        if mode in (2, 3, 4):
-            self.ai = NeuralMCTSAI(
-            model_path="checkpoints/hex_model_v5.pt",
-            simulations=100,
-            c_puct=1.5
-        )
-        else:
-            self.ai = None
-
+        self.human = {2: 1, 3: 2}.get(mode)
+        self.ai = None
+        self.ai_status_message = ""
+        self.ai_request_id += 1
+        self.ai_thread = None
+        self.ai_result = None
         self.state = S_PLAY
+
 
     def player_of(self, color):
         """执该颜色的玩家编号（1 或 2）。"""
@@ -221,7 +225,6 @@ class HexGame:
         return (q, r) if self.board.in_range(q, r) else None
 
     def on_click(self, pos):
-        print("鼠标点击:", pos, "当前状态:", self.state, "当前模式:", self.mode)
         if self.state == S_START:
             for rect, mode in self.mode_buttons:
                 if rect.collidepoint(pos):
@@ -263,19 +266,100 @@ class HexGame:
             self.turn = BLUE if self.turn == RED else RED
 
     # ---------- AI ----------
+    def _ai_worker(self, board_snapshot, color, request_id):
+        """后台加载并运行 AI，不直接修改正式棋盘。"""
+        from hex_ai import BasicAI
+
+        init_error = None
+        inference_error = None
+        fallback_error = None
+        ai = self.ai
+
+        if ai is None:
+            from ai.neural_ai import create_ai_with_fallback
+            ai, init_error = create_ai_with_fallback()
+            self.ai = ai
+
+        try:
+            move, reason = ai.choose_move(board_snapshot, color)
+            q, r = move
+            if not board_snapshot.in_range(q, r) or not board_snapshot.is_empty(q, r):
+                raise ValueError(f"AI 返回非法着法: {move!r}")
+        except Exception as exc:
+            inference_error = exc
+            try:
+                fallback = BasicAI()
+                move, reason = fallback.choose_move(board_snapshot, color)
+                self.ai = fallback
+            except Exception as fallback_exc:
+                fallback_error = fallback_exc
+                move, reason = None, ""
+
+        if request_id == self.ai_request_id:
+            self.ai_result = (request_id, color, move, reason,
+                              init_error, inference_error, fallback_error)
+
+    def _consume_ai_result(self):
+        result = self.ai_result
+        self.ai_result = None
+        self.ai_thread = None
+        if result is None:
+            return
+
+        request_id, color, move, reason, init_error, inference_error, fallback_error = result
+        if (request_id != self.ai_request_id or self.state != S_PLAY
+                or self.turn != color):
+            return
+        if init_error:
+            print(f"[AI] {init_error}")
+            self.ai_status_message = "模型不可用，已回退基础 AI"
+        if inference_error:
+            print(f"[AI] 推理失败: {inference_error}")
+            self.ai_status_message = "模型推理失败，已回退基础 AI"
+        if fallback_error:
+            print(f"[AI] 基础 AI 回退失败: {fallback_error}")
+            self.ai_status_message = "AI 执行失败"
+            return
+        if move is None:
+            return
+
+        self.pending_move = move
+        self.pending_reason = reason
+        self.ai_act_at = pygame.time.get_ticks() + AI_DELAY_MS
+
     def update_ai(self):
-        """AI 回合：先算好着法，隔一小段演示间隔后落下。"""
+        """AI 回合：后台计算着法，完成后延迟演示落子。"""
         if self.state != S_PLAY or self.is_human_turn():
             return
+
         now = pygame.time.get_ticks()
-        if self.pending_move is None:
-            (q, r), reason = self.ai.choose_move(self.board, self.turn)
-            self.pending_move, self.pending_reason = (q, r), reason
-            self.ai_act_at = now + AI_DELAY_MS
-        elif now >= self.ai_act_at:
-            q, r = self.pending_move
-            reason, self.pending_move = self.pending_reason, None
-            self.apply_move(q, r, reason)
+        if self.pending_move is not None:
+            if now >= self.ai_act_at:
+                q, r = self.pending_move
+                reason, self.pending_move = self.pending_reason, None
+                self.apply_move(q, r, reason)
+            return
+
+        if self.ai_result is not None:
+            self._consume_ai_result()
+            return
+
+        if self.ai_thread is not None and self.ai_thread.is_alive():
+            return
+
+        self.ai_thread = None
+        snapshot = HexBoard()
+        snapshot.grid = [row[:] for row in self.board.grid]
+        snapshot.history = list(self.board.history)
+        request_id = self.ai_request_id
+        color = self.turn
+        self.ai_thread = threading.Thread(
+            target=self._ai_worker,
+            args=(snapshot, color, request_id),
+            daemon=True,
+        )
+        self.ai_thread.start()
+
 
     def quit(self):
         pygame.quit()
@@ -414,7 +498,7 @@ class HexGame:
 
         if self.state == S_PLAY:
             label = self.player_label(self.player_of(self.turn))
-            ai_note = "" if self.is_human_turn() else "  —— AI 思考中…"
+            ai_note = "" if self.is_human_turn() else f"  —— {self.ai_status_message or 'AI 思考中…'}"
             rect = self.blit(f"轮到 {CNAMES[self.turn]}（{label}）{ai_note}",
                              (WINDOW_W - 12, 12), self.font_m, TEXT_CLR, anchor="topright")
             pygame.draw.circle(self.screen, CCOLORS[self.turn],

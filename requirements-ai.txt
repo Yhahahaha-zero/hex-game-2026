@@ -1,0 +1,6 @@
+﻿# Optional neural AI dependencies. Install only when using NeuralMCTSAI.
+# Python 3.13 CPU example:
+#   python -m pip install -r requirements-ai.txt
+# For a CUDA build, install the matching PyTorch wheel from pytorch.org.
+torch>=2.7,<3
+numpy>=2.0

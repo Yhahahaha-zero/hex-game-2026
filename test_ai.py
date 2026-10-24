@@ -1,0 +1,60 @@
+﻿# -*- coding: utf-8 -*-
+"""AI 契约、模型回退和只读行为测试。"""
+import tempfile
+import unittest
+from pathlib import Path
+
+from ai.neural_ai import (NeuralMCTSAI, choose_tactical_move,
+                         create_ai_with_fallback)
+from hex_ai import BasicAI
+from hex_board import BLUE, HexBoard, RED
+
+
+class AIContractTest(unittest.TestCase):
+    def test_basic_ai_returns_unified_format_without_mutating_board(self):
+        board = HexBoard()
+        before_grid = [row[:] for row in board.grid]
+        before_history = list(board.history)
+        move, reason = BasicAI().choose_move(board, RED)
+        self.assertEqual(len(move), 2)
+        self.assertIsInstance(reason, str)
+        self.assertTrue(board.is_empty(*move))
+        self.assertEqual(board.grid, before_grid)
+        self.assertEqual(board.history, before_history)
+
+    def test_missing_model_falls_back_to_basic_ai(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "missing.pt"
+            ai, error = create_ai_with_fallback(model_path=missing)
+        self.assertIsInstance(ai, BasicAI)
+        self.assertIsNotNone(error)
+        self.assertIn("模型不可用", error)
+
+    def test_tactical_move_prefers_direct_win(self):
+        board = HexBoard()
+        for row in range(10):
+            board.place(0, row, RED)
+        move, reason = choose_tactical_move(board, RED)
+        self.assertEqual(move, (0, 10))
+        self.assertEqual(reason, "直接获胜")
+
+    def test_tactical_move_blocks_immediate_threat(self):
+        board = HexBoard()
+        for col in range(1, 11):
+            board.place(col, 5, BLUE)
+        move, reason = choose_tactical_move(board, RED)
+        self.assertIn(move, {(0, 5), (0, 6)})
+        self.assertEqual(reason, "紧急防守")
+
+
+    def test_neural_ai_metadata_and_missing_model_error(self):
+        self.assertEqual(NeuralMCTSAI.version, "5.0.0")
+        self.assertEqual(NeuralMCTSAI.time_limit_ms, 200)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            missing = Path(temp_dir) / "missing.pt"
+            with self.assertRaises(FileNotFoundError):
+                NeuralMCTSAI(model_path=missing)
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

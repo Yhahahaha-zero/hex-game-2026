@@ -5,6 +5,7 @@ import contextlib
 import io
 import os
 import random
+import time
 import tempfile
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"   # 无窗口模式
@@ -122,7 +123,13 @@ g2.on_click((int(x), int(y)))
 assert g2.board.history and g2.turn == hg.BLUE  # 轮到 AI
 g2.on_click((int(x), int(y)))                   # AI 回合点人无效
 assert len(g2.board.history) == 1
-g2.update_ai()                                  # AI 算好待演示
+started_ai = time.monotonic()
+g2.update_ai()                                  # 启动后台 AI
+assert time.monotonic() - started_ai < 0.5, "AI 调用阻塞了主线程"
+deadline = time.monotonic() + 5.0
+while g2.pending_move is None and time.monotonic() < deadline:
+    time.sleep(0.01)
+    g2.update_ai()
 assert g2.pending_move is not None
 g2.ai_act_at = 0
 g2.update_ai()                                  # AI 落子

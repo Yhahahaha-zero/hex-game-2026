@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from hex_ai import BasicAI
 from hex_board import HexBoard
 from tools import benchmark_ai as benchmark
 
@@ -40,6 +41,8 @@ class BenchmarkAITest(unittest.TestCase):
             self.assertEqual(document["config"]["total_games"], 8)
             self.assertEqual(document["config"]["pairing"],
                              "AB/BA with colors swapped")
+            self.assertEqual(document["config"]["ai_a_metadata"]["name"], BasicAI().name)
+            self.assertIn("version", document["config"]["ai_b_metadata"])
             self.assertEqual(len(document["games"]), 8)
             self.assertEqual(document["summary"]["games_completed"], 8)
             self.assertEqual(document["summary"]["errors"], 0)

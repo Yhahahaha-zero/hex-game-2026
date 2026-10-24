@@ -1,4 +1,4 @@
-﻿# 海克斯棋（Hex）
+# 海克斯棋（Hex）
 
 双人落子类游戏。11×11 六边形棋盘，红方连通上下红色边界获胜，蓝方连通左右蓝色边界获胜。单局无和棋，每场两局、双方轮流先手（红方每局先行）。坐标先纵后横，如 `5C` = 第 5 行第 C 列。
 
@@ -13,6 +13,17 @@ py -m pip install pygame-ce   # Python 3.14 及以上（导入名同为 pygame�
 ```
 
 `start_game.bat` 会自动完成第 2 步（自动识别 Python 版本选择正确的包）。
+
+### 神经网络 AI（可选）
+
+使用神经 MCTS 时安装 AI 依赖：
+
+```bash
+python -m pip install -r requirements-ai.txt
+```
+
+默认模型路径为 `checkpoints/hex_model_v5.pt`。当前附带的是训练 10 局的集成验证参考模型，仅用于跑通流程，不能代表最终比赛水平；正式提交前应替换为队友的完整训练权重。模型或 torch 不可用时，人机模式会自动回退基础 AI，双人模式不受影响。模型说明见 `checkpoints/README.md`。
+
 
 ## 常见问题
 
@@ -85,7 +96,7 @@ check.bat
 也可单独运行以下命令：
 ```bash
 py hex_game_test.py
-py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py
+py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py
 ```
 
 ## AI 对比评测
@@ -98,6 +109,26 @@ py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_be
 python tools/benchmark_ai.py --ai-a basic --ai-b random --games 500 --repeats 3
 ```
 
+
+神经 AI 对基础 AI：
+
+```bash
+python tools/benchmark_ai.py --ai-a basic --ai-b neural --games 1000 --repeats 3 --seed 20261024
+```
+
+检查模型文件和单步耗时：
+
+```bash
+python tools/check_model.py checkpoints/hex_model_v5.pt
+```
+
+训练 V5 模型：
+
+```bash
+python ai/train_v5.py --games 500 --seed 20261024 --output checkpoints/hex_model_v5.pt
+```
+
+训练完成后会同时生成 `model_config.json` 和 `.sha256` 校验文件。
 自定义 AI 使用 `module:Class` 或 `path/to/file.py:Class`。结果写入 `benchmark_results/`，包含 JSON、汇总 CSV 和逐局 CSV。
 
 
@@ -108,6 +139,14 @@ python tools/benchmark_ai.py --ai-a basic --ai-b random --games 500 --repeats 3
 | `hex_game.py` | pygame 图形界面（主程序） |
 | `hex_board.py` | 规则核心：棋盘、BFS/DFS 连通性判定、并查集快速判定、文本棋盘 |
 | `hex_ai.py` | AI：直接获胜 > 紧急防守 > 中心偏好随机；预留路径评估扩展点 |
+| `ai/neural_ai.py` | V5 神经网络、战术预检查、有限时间 MCTS 和回退工厂 |
+| `ai/mcts.py` | PUCT MCTS、合法动作掩码和单步时间上限 |
+| `ai/model_v5.py` | HexNetV5 网络结构和动作空间工具 |
+| `ai/train_v5.py` | 可复现 V5 自对弈训练与模型元数据保存 |
+| `requirements-ai.txt` | 可选 PyTorch/NumPy 依赖 |
+| `checkpoints/README.md` | 模型权重提交和版本管理说明 |
+| `test_ai.py` | AI 契约、回退和战术测试 |
+| `test_mcts.py` | 编码、网络和 MCTS 测试（无 torch 时跳过） |
 | `hex_match.py` | 自动对局：胜率统计、对局记录、失败棋局复现、耗时统计 |
 | `hex_game_test.py` | 自测脚本（7 组） |
 | `hex_engine.py` | 对局引擎：回合、判胜、两局换色、比分与历史记录 |
@@ -117,6 +156,7 @@ python tools/benchmark_ai.py --ai-a basic --ai-b random --games 500 --repeats 3
 | `test_hex_match.py` | 自动对局、记录和复盘回归测试（6 项） |
 | `tools/benchmark_ai.py` | AI 固定种子、AB/BA 配对评测及 CSV/JSON 输出 |
 | `test_benchmark_ai.py` | AI 评测工具回归测试（5 项） |
+| `tools/check_model.py` | 模型文件、哈希、加载耗时和试下着法检查 |
 | `docs/AI_INTERFACE.md` | AI 输入输出、模型加载、设备、耗时、种子和回退契约 |
 | `docs/UI_ENGINE_CONTRACT.md` | 页面层与引擎层的接口和职责契约 |
 | `hex_records.json` | 对局记录（自动生成，可删除） |
