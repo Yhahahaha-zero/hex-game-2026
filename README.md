@@ -35,6 +35,14 @@ py -m pip install pygame-ce   # Python 3.14 及以上（导入名同为 pygame�
 - **双击 `start_game.bat`**（推荐，无需打开命令行）
 - 或在本文件夹打开命令行执行：`py hex_game.py`
 
+### 环境自检（可选）
+
+```bat
+start_game.bat --check
+```
+
+脚本会自动寻找带 pip 的 Python，并检查 pygame 是否可用；此模式不会安装依赖或启动游戏。
+
 ### 开始画面按数字键 1-4（或点击按钮）选择模式
 
 | 按键 | 模式 | 说明 |

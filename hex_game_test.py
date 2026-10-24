@@ -26,8 +26,10 @@ assert len(list(b.neighbors(5, 5))) == 6
 assert len(list(b.neighbors(0, 0))) == 2
 assert hb.cell_name(2, 4) == "5C"                # 先纵后横
 assert hb.parse_cell("5C") == (2, 4)
-assert hb.parse_cell("C5") == (2, 4)             # 兼容横前纵后
-assert hb.parse_cell("12A") is None
+assert hb.parse_cell("C5") is None               # strict default
+assert hb.parse_cell("C5", strict=False) == (2, 4)  # explicit compatibility
+for invalid in ("5c", "05C", " 5C", "5C ", "0A", "12A"):
+    assert hb.parse_cell(invalid) is None, invalid
 print("[2] 邻居表与坐标解析 OK")
 
 # 3) 随机对局 300 局：每局必有胜负（无和棋），且获胜通路端点正确

@@ -1,58 +1,101 @@
 @echo off
-rem Hex game launcher: auto-detect Python, install pygame if needed, then start.
+setlocal EnableExtensions
 cd /d "%~dp0"
 
-rem ---- locate Python (py launcher first, then python command) ----
-set PYCMD=py
-where py >nul 2>nul
-if errorlevel 1 (
-    where python >nul 2>nul
+if not exist "hex_game.py" (
+    echo [ERROR] hex_game.py was not found next to this launcher.
+    pause
+    exit /b 1
+)
+
+rem Find a Python interpreter that can actually run pip.
+rem A py.exe launcher may exist without any registered Python installation.
+set "PYTHON_EXE="
+set "PYTHON_ARGS="
+
+for /f "delims=" %%P in ('where py 2^>nul') do (
+    "%%~P" -3 -m pip --version >nul 2>nul
+    if not errorlevel 1 (
+        set "PYTHON_EXE=%%~P"
+        set "PYTHON_ARGS=-3"
+        goto :python_found
+    )
+)
+
+for /f "delims=" %%P in ('where python 2^>nul') do (
+    "%%~P" -m pip --version >nul 2>nul
+    if not errorlevel 1 (
+        set "PYTHON_EXE=%%~P"
+        set "PYTHON_ARGS="
+        goto :python_found
+    )
+)
+
+for /f "delims=" %%P in ('where python3 2^>nul') do (
+    "%%~P" -m pip --version >nul 2>nul
+    if not errorlevel 1 (
+        set "PYTHON_EXE=%%~P"
+        set "PYTHON_ARGS="
+        goto :python_found
+    )
+)
+
+echo [ERROR] No usable Python with pip was found.
+echo         Install Python 3 from https://www.python.org/
+echo         and enable "Add python.exe to PATH" plus pip during installation.
+echo         Then run this command to verify:
+echo             python -m pip --version
+pause
+exit /b 1
+
+:python_found
+"%PYTHON_EXE%" %PYTHON_ARGS% -c "import sys; print('[INFO] Python', sys.version.split()[0], 'at', sys.executable)"
+
+if /i "%~1"=="--check" (
+    "%PYTHON_EXE%" %PYTHON_ARGS% -c "import pygame; print('[OK] pygame', pygame.version.ver)" 2>nul
     if errorlevel 1 (
-        echo [ERROR] Python not found. Please install Python 3.11+ from https://www.python.org/
-        echo         and check "Add python.exe to PATH" during installation.
-        pause
+        echo [INFO] pygame is not installed. A normal launch will install it.
         exit /b 1
     )
-    set PYCMD=python
+    echo [OK] Launcher environment check completed.
+    exit /b 0
 )
 
-rem ---- show which Python will be used (helps diagnosing problems) ----
-%PYCMD% -c "import sys; print('[INFO] Python', sys.version.split()[0], 'at', sys.executable)"
+"%PYTHON_EXE%" %PYTHON_ARGS% -c "import pygame" >nul 2>nul
+if not errorlevel 1 goto :run
 
-rem ---- pygame already installed? then start directly ----
-%PYCMD% -c "import pygame" >nul 2>nul
-if not errorlevel 1 goto run
+echo [INFO] pygame is not installed. Installing it now...
+set "PKG=pygame"
+"%PYTHON_EXE%" %PYTHON_ARGS% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 14) else 1)"
+if not errorlevel 1 set "PKG=pygame-ce"
 
-echo [INFO] pygame not installed, installing now...
-
-rem ---- Python 3.14+ has no classic pygame wheels; pygame-ce is a drop-in
-rem      replacement (same "import pygame", no code changes needed) ----
-set PKG=pygame
-%PYCMD% -c "import sys; sys.exit(0 if sys.version_info >= (3, 14) else 1)"
-if not errorlevel 1 set PKG=pygame-ce
-
-%PYCMD% -m pip install --upgrade pip >nul 2>nul
-echo [INFO] Installing %PKG% from your default pip source ...
-%PYCMD% -m pip install %PKG%
+echo [INFO] Installing %PKG% from the configured pip source...
+"%PYTHON_EXE%" %PYTHON_ARGS% -m pip install --disable-pip-version-check %PKG%
 if errorlevel 1 (
-    echo [WARN] Default source failed, retrying with Aliyun mirror ...
-    %PYCMD% -m pip install %PKG% -i https://mirrors.aliyun.com/pypi/simple
+    echo [WARN] Default source failed. Retrying with the Aliyun mirror...
+    "%PYTHON_EXE%" %PYTHON_ARGS% -m pip install --disable-pip-version-check %PKG% -i https://mirrors.aliyun.com/pypi/simple
 )
 if errorlevel 1 (
-    echo [WARN] Retrying with official PyPI ...
-    %PYCMD% -m pip install %PKG% -i https://pypi.org/simple
+    echo [WARN] Mirror failed. Retrying with official PyPI...
+    "%PYTHON_EXE%" %PYTHON_ARGS% -m pip install --disable-pip-version-check %PKG% -i https://pypi.org/simple
 )
 if errorlevel 1 (
-    echo [ERROR] Automatic install failed. Possible causes:
-    echo         1. No network access to pip mirrors.
-    echo         2. Python is a restricted edition - install the full version from python.org.
-    echo.
-    echo         Manual install, then rerun this file:
-    echo         %PYCMD% -m pip install %PKG%
+    echo [ERROR] Automatic pygame installation failed.
+    echo         Check the network connection, then run manually:
+    echo             "%PYTHON_EXE%" %PYTHON_ARGS% -m pip install %PKG%
+    pause
+    exit /b 1
+)
+
+"%PYTHON_EXE%" %PYTHON_ARGS% -c "import pygame" >nul 2>nul
+if errorlevel 1 (
+    echo [ERROR] pygame was installed but still cannot be imported.
     pause
     exit /b 1
 )
 
 :run
-%PYCMD% hex_game.py
-if errorlevel 1 pause
+"%PYTHON_EXE%" %PYTHON_ARGS% "hex_game.py"
+set "EXIT_CODE=%ERRORLEVEL%"
+if not "%EXIT_CODE%"=="0" pause
+exit /b %EXIT_CODE%
