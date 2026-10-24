@@ -360,7 +360,7 @@ python tools/benchmark_ai.py \
 - 默认设备：有 CUDA 时使用 CUDA，否则使用 CPU；
 - 默认单步上限：`200 ms`；
 - 默认最大模拟次数：`100`；
-- 页面通过后台线程加载和推理，不阻塞 pygame 主循环；
+- 页面通过后台线程加载和推理，不阻塞 pygame 主循环；`n- 神经 AI 可通过 `set_progress_callback()` 上报 MCTS 模拟进度；
 - torch、权重或推理失败时回退 `BasicAI`，并在界面显示回退状态；
 - 严格 benchmark 不回退，异常会写入结果；
 - 可选依赖：`requirements-ai.txt`；

@@ -1,4 +1,4 @@
-﻿# 页面层与 HexEngine 接口契约
+# 页面层与 HexEngine 接口契约
 
 本文档用于约定页面层与规则引擎的职责边界。页面版本稳定后，应按本文档统一接入 `HexEngine`。
 
@@ -159,4 +159,4 @@ engine.state
 - 换手、判胜、比分和两局状态由引擎维护；
 - 棋盘绘制已拆分到 `ui/board_renderer.py`；
 - AI 线程已拆分到 `ai/worker.py`；
-- 右侧下棋记录已由 `ui/history_panel.py` 渲染。
+- 右侧下棋记录已由 `ui/history_panel.py` 渲染；\n- 双计时器由 `game_timer.py` 使用单调时钟维护；\n- JSON 保存和复盘由 `game_records.py` 负责；\n- AI 搜索进度通过 `AIWorker.progress` 供页面轮询。

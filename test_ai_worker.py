@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """AIWorker 和 AIResult 的单元测试。"""
 import unittest
 
@@ -15,6 +15,21 @@ class StaticAI:
 
     def choose_move(self, board, player):
         return self.move, self.reason
+
+
+class ProgressAI:
+    name = "ProgressAI"
+
+    def __init__(self):
+        self.callback = None
+
+    def set_progress_callback(self, callback):
+        self.callback = callback
+
+    def choose_move(self, board, player):
+        if self.callback:
+            self.callback({"completed": 3, "total": 10, "best_move": (5, 5)})
+        return (5, 5), "progress"
 
 
 class FailingAI:
@@ -53,6 +68,16 @@ class AIWorkerTest(unittest.TestCase):
         self.assertTrue(result.used_fallback)
         self.assertIn("模拟推理失败", result.inference_error)
         self.assertEqual(result.ai.name, "基础AI")
+
+    def test_worker_exposes_ai_search_progress(self):
+        worker = AIWorker(HexBoard(), RED, 10, ai=ProgressAI())
+        worker.start()
+        worker.join(2.0)
+        progress = worker.progress
+        self.assertEqual(progress["completed"], 3)
+        self.assertEqual(progress["total"], 10)
+        self.assertEqual(progress["best_move"], (5, 5))
+        self.assertEqual(progress["phase"], "done")
 
     def test_invalid_ai_move_triggers_fallback(self):
         worker = AIWorker(HexBoard(), RED, 9, ai=StaticAI(move=(99, 99)))

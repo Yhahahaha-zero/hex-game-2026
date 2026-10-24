@@ -1,28 +1,27 @@
 # -*- coding: utf-8 -*-
-"""海克斯棋 pygame 界面：只负责输入、协调和绘制。"""
+"""海克斯棋 pygame 界面：输入、协调、计时和复盘。"""
 import os
 
 import pygame
 
 from ai.worker import AIWorker
-from hex_board import BLUE, COLS, EMPTY, IllegalMoveError, RED, ROWS, cell_name
+from game_mode import GameMode
+from game_records import (ReplaySession, latest_record, load_record,
+                          save_match_record)
+from game_timer import DualGameTimer
+from hex_board import BLUE, IllegalMoveError, RED, cell_name
 from hex_engine import (HexEngine, STATE_GAME_OVER, STATE_MATCH_OVER,
                         STATE_PLAYING)
 from ui.board_renderer import (BG, BLUE_CLR, BOARD_W, DIM_CLR, GOLD,
-                               PIECE_COLORS, RED_CLR, TEXT_CLR, WHITE,
+                               PIECE_COLORS, RED_CLR, TEXT_CLR,
                                WINDOW_H, BoardRenderer, cell_center,
                                hex_corners, pixel_to_hex)
 from ui.history_panel import HistoryPanel, PANEL_W
 
 
-S_START, S_PLAY, S_WIN, S_MATCH_END = range(4)
+S_START, S_PLAY, S_WIN, S_MATCH_END, S_REPLAY = range(5)
 WINDOW_W = BOARD_W + PANEL_W
-MODES = {
-    1: ("双人对战", "两名玩家轮流点击落子"),
-    2: ("人机对战 · 玩家执红", "玩家先手"),
-    3: ("人机对战 · 玩家执蓝", "AI 先手"),
-    4: ("AI 对 AI 观战", "空格暂停 / 继续"),
-}
+MODES = {mode.value: (mode.label, mode.description) for mode in GameMode}
 AI_DELAY_MS = 350
 WATCH_AUTO_MS = 1600
 CNAMES = {RED: "红方", BLUE: "蓝方"}
@@ -58,7 +57,7 @@ def get_font(size, bold=False):
 
 
 class HexGame:
-    """界面控制器：规则和比赛状态全部委托给 HexEngine。"""
+    """界面控制器：规则由 HexEngine 管理，AI 和绘制由独立模块完成。"""
 
     def __init__(self):
         pygame.init()
@@ -72,17 +71,26 @@ class HexGame:
         self.renderer = BoardRenderer(self.font_s)
         self.history_panel = HistoryPanel()
         self.history_panel.set_fonts(self.font_m, self.font_xs)
-        self.mode = 0
+        self.timer = DualGameTimer()
+        self.mode = None
         self.human = None
         self.ai = None
         self.ai_status_message = ""
         self.ai_request_id = 0
         self.ai_worker = None
         self.mode_buttons = []
+        self.panel_message = ""
+        self.replay = None
+        self.replay_return_state = S_PLAY
+        self.last_record_path = latest_record()
         self.engine = HexEngine("玩家1", "玩家2")
         self.reset_match(show_intro=True)
 
-    # ---------- 引擎同步 ----------
+    # ---------- 引擎与计时同步 ----------
+    @staticmethod
+    def _player_labels():
+        return {"玩家1": "玩家1", "玩家2": "玩家2"}
+
     def _sync_engine(self):
         self.board = self.engine.board
         self.game_no = self.engine.game_no
@@ -110,45 +118,51 @@ class HexGame:
         self.ai_worker = None
 
     def reset_match(self, show_intro=False):
-        """开始一场新比赛，保留当前模式。"""
         self.engine = HexEngine("玩家1", "玩家2")
         self._reset_transient_state()
         self._sync_engine()
+        self.timer.reset()
         self.state = S_START if show_intro else S_PLAY
+        if self.state == S_PLAY:
+            self.timer.start(self.engine.current_color)
 
     def new_game(self):
-        """兼容接口：重开第一局。"""
         self.engine.start_match()
         self._reset_transient_state()
         self._sync_engine()
+        self.timer.reset()
+        self.timer.start(self.engine.current_color)
         self.state = S_PLAY
 
     def start_mode(self, mode):
-        self.mode = mode
-        self.human = {2: 1, 3: 2}.get(mode)
+        self.mode = GameMode(mode)
+        self.human = self.mode.human_player
         self.ai = None
         self.ai_status_message = ""
+        self.panel_message = ""
         self.engine = HexEngine("玩家1", "玩家2")
         self._reset_transient_state()
         self._sync_engine()
+        self.timer.reset()
+        self.timer.start(self.engine.current_color)
         self.state = S_PLAY
 
     def player_of(self, color):
         return 1 if self.engine.side_of(color) == "玩家1" else 2
 
     def player_label(self, pid):
-        if self.mode == 1 or self.human == pid:
+        if self.mode == GameMode.HUMAN_VS_HUMAN or self.human == pid:
             return f"玩家{pid}"
-        if self.mode == 4:
+        if self.mode == GameMode.AI_VS_AI:
             return f"AI{pid}"
         return "AI"
 
     def is_human_turn(self):
         if self.engine.state != STATE_PLAYING:
             return False
-        if self.mode == 1:
+        if self.mode == GameMode.HUMAN_VS_HUMAN:
             return True
-        if self.mode == 4:
+        if self.mode == GameMode.AI_VS_AI:
             return False
         return self.player_of(self.engine.current_color) == self.human
 
@@ -158,19 +172,87 @@ class HexGame:
         self.engine.next_game()
         self._reset_transient_state()
         self._sync_engine()
-        self.state = S_MATCH_END if self.engine.state == STATE_MATCH_OVER else S_PLAY
+        self.timer.reset()
+        if self.engine.state == STATE_MATCH_OVER:
+            self.state = S_MATCH_END
+        else:
+            self.timer.start(self.engine.current_color)
+            self.state = S_PLAY
+
+    # ---------- 记录和复盘 ----------
+    def save_record(self):
+        try:
+            self.last_record_path = save_match_record(
+                self.engine,
+                self.mode,
+                self._player_labels(),
+                self.timer,
+            )
+            self.panel_message = f"记录已保存：{self.last_record_path.name}"
+        except Exception as exc:
+            self.panel_message = f"保存失败：{exc}"
+
+    def start_replay(self):
+        path = latest_record() or self.last_record_path
+        if path is None:
+            self.panel_message = "暂无 JSON 对局记录"
+            return
+        try:
+            document = load_record(path)
+            self.replay = ReplaySession(document)
+            self.replay_return_state = self.state
+            self.timer.pause()
+            self.state = S_REPLAY
+            self.panel_message = ""
+            self.last_record_path = path
+        except Exception as exc:
+            self.panel_message = f"复盘失败：{exc}"
+
+    def exit_replay(self):
+        previous = self.replay_return_state
+        self.replay = None
+        self.state = previous
+        if previous == S_PLAY:
+            self.timer.resume()
+
+    def replay_next(self):
+        if self.replay is not None:
+            self.replay.next()
+
+    def replay_previous(self):
+        if self.replay is not None:
+            self.replay.previous()
 
     # ---------- 输入 ----------
     def pick(self, pos):
         q, r = pixel_to_hex(*pos)
         return (q, r) if self.board.in_range(q, r) else None
 
+    def _handle_panel_click(self, pos):
+        if self.state == S_START:
+            return False
+        if self.history_panel.save_button.collidepoint(pos):
+            self.save_record()
+            return True
+        if self.history_panel.replay_button.collidepoint(pos):
+            if self.state == S_REPLAY:
+                self.exit_replay()
+            else:
+                self.start_replay()
+            return True
+        return False
+
     def on_click(self, pos):
+        if self._handle_panel_click(pos):
+            return
         if self.state == S_START:
             for rect, mode in self.mode_buttons:
                 if rect.collidepoint(pos):
                     self.start_mode(mode)
                     return
+        elif self.state == S_REPLAY:
+            if pos[0] < BOARD_W:
+                self.replay_next()
         elif self.state == S_WIN:
             self.advance_match()
         elif self.state == S_MATCH_END:
@@ -185,16 +267,21 @@ class HexGame:
 
     def on_space(self):
         if self.state == S_START:
-            self.start_mode(1)
+            self.start_mode(GameMode.HUMAN_VS_HUMAN)
+        elif self.state == S_REPLAY:
+            self.replay_next()
         elif self.state == S_WIN:
             self.advance_match()
         elif self.state == S_MATCH_END:
             self.reset_match()
-        elif self.state == S_PLAY and self.mode == 4:
+        elif self.state == S_PLAY and self.mode == GameMode.AI_VS_AI:
             self.paused = not self.paused
+            if self.paused:
+                self.timer.pause()
+            else:
+                self.timer.resume()
 
     def apply_move(self, q, r, reason=None):
-        """通过 HexEngine 完成落子、换手、判胜和计分。"""
         if self.engine.state != STATE_PLAYING:
             return False
         color = self.engine.current_color
@@ -205,12 +292,14 @@ class HexGame:
         self.last_move = (q, r, color, reason)
         self._sync_engine()
         if won or self.engine.state == STATE_GAME_OVER:
+            self.timer.stop()
             self.state = S_WIN
             self.win_at = pygame.time.get_ticks()
             self.pending_move = None
             self.pending_reason = None
             self.ai_worker = None
         else:
+            self.timer.switch_to(self.engine.current_color)
             self.state = S_PLAY
         return won
 
@@ -239,8 +328,26 @@ class HexGame:
         self.pending_reason = result.reason
         self.ai_act_at = pygame.time.get_ticks() + AI_DELAY_MS
 
+    def _ai_progress_text(self):
+        if self.ai_worker is None:
+            return ""
+        progress = self.ai_worker.progress
+        phase = progress.get("phase")
+        if phase == "loading":
+            return "AI 正在加载模型…"
+        if phase == "searching":
+            best = progress.get("best_move")
+            best_text = cell_name(*best) if best else "-"
+            return (
+                f"搜索 {progress.get('completed', 0)}/"
+                f"{progress.get('total', 0)}\n"
+                f"最佳 {best_text} · {progress.get('elapsed_ms', 0):.0f} ms"
+            )
+        if phase == "thinking":
+            return "AI 正在思考…"
+        return ""
+
     def update_ai(self):
-        """后台计算 AI 着法，主线程只消费结果并落子。"""
         if self.state != S_PLAY or self.is_human_turn():
             return
         now = pygame.time.get_ticks()
@@ -258,12 +365,7 @@ class HexGame:
                 self._consume_ai_result(worker.result)
                 return
         color = self.engine.current_color
-        self.ai_worker = AIWorker(
-            self.board,
-            color,
-            self.ai_request_id,
-            ai=self.ai,
-        )
+        self.ai_worker = AIWorker(self.board, color, self.ai_request_id, ai=self.ai)
         self.ai_worker.start()
 
     def quit(self):
@@ -277,9 +379,22 @@ class HexGame:
                 if event.type == pygame.QUIT:
                     self.quit()
                 if event.type == pygame.KEYDOWN:
+                    ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
                     if event.key == pygame.K_ESCAPE:
-                        self.quit()
-                    if event.key == pygame.K_SPACE:
+                        if self.state == S_REPLAY:
+                            self.exit_replay()
+                        else:
+                            self.quit()
+                    elif ctrl and event.key == pygame.K_s:
+                        self.save_record()
+                    elif event.key == pygame.K_F5:
+                        self.start_replay()
+                    elif self.state == S_REPLAY:
+                        if event.key == pygame.K_LEFT:
+                            self.replay_previous()
+                        elif event.key in (pygame.K_RIGHT, pygame.K_SPACE):
+                            self.replay_next()
+                    elif event.key == pygame.K_SPACE:
                         self.on_space()
                     elif self.state == S_START and pygame.K_1 <= event.key <= pygame.K_4:
                         self.start_mode(event.key - pygame.K_1 + 1)
@@ -288,8 +403,9 @@ class HexGame:
             self.hover = self.pick(pygame.mouse.get_pos())
             if self.state == S_PLAY and not self.paused:
                 self.update_ai()
-            elif (self.state == S_WIN and self.mode == 4 and not self.paused
-                  and self.win_at and pygame.time.get_ticks() - self.win_at > WATCH_AUTO_MS):
+            elif (self.state == S_WIN and self.mode == GameMode.AI_VS_AI
+                  and not self.paused and self.win_at
+                  and pygame.time.get_ticks() - self.win_at > WATCH_AUTO_MS):
                 self.advance_match()
             self.draw()
             pygame.display.flip()
@@ -304,23 +420,29 @@ class HexGame:
 
     def draw(self):
         self.screen.fill(BG)
+        replaying = self.state == S_REPLAY and self.replay is not None
+        board = self.replay.board if replaying else self.board
+        win_path = None if replaying else self.win_path
+        last_move = self.replay.last_move if replaying else self.last_move
         self.renderer.draw(
             self.screen,
-            self.board,
+            board,
             hover=self.hover,
-            win_path=self.win_path,
-            last_move=self.last_move,
+            win_path=win_path,
+            last_move=last_move,
             can_hover=self.state == S_PLAY and self.is_human_turn(),
         )
         if self.state != S_START:
-            status = self.ai_status_message
-            if self.state == S_PLAY and not self.is_human_turn() and not status:
-                status = "AI 思考中…"
+            moves = self.replay.current_moves() if replaying else self.engine.game_moves(self.game_no)
+            game_no = self.replay.game_no if replaying else self.game_no
+            status = self._panel_status()
             self.history_panel.draw(
                 self.screen,
-                self.engine.game_moves(self.game_no),
-                self.game_no,
-                status,
+                moves,
+                game_no,
+                timers=self.timer.formatted(),
+                ai_status=status,
+                replay_mode=replaying,
             )
         self.draw_hud()
         if self.state == S_START:
@@ -329,18 +451,29 @@ class HexGame:
             self.draw_win_banner()
         elif self.state == S_MATCH_END:
             self.draw_match_end()
+        elif self.state == S_REPLAY:
+            self.draw_replay_banner()
+
+    def _panel_status(self):
+        if self.state == S_REPLAY and self.replay is not None:
+            return (
+                f"复盘 {self.replay.step}/{self.replay.total_moves}\n"
+                "← → 切换\nEsc 返回"
+            )
+        progress = self._ai_progress_text()
+        parts = [part for part in (self.ai_status_message, progress, self.panel_message) if part]
+        return "\n".join(parts)
 
     def draw_hud(self):
-        if self.state == S_START:
+        if self.state in (S_START, S_REPLAY):
             return
         p1, p2 = self.match_scores
         self.blit(f"第 {self.game_no}/2 局", (12, 8), self.font_m, TEXT_CLR)
         self.blit(f"比分  {self.player_label(1)} {p1} : {p2} {self.player_label(2)}",
                   (12, 38), self.font_s, DIM_CLR)
-        mode_text = MODES[self.mode][0] if self.mode else "未选择"
+        mode_text = self.mode.label if self.mode else "未选择"
         self.blit(f"模式：{mode_text}    执红（先手）：{self.player_label(self.red_player)}",
                   (12, 62), self.font_s, DIM_CLR)
-
         if self.state == S_PLAY:
             color = self.engine.current_color
             label = self.player_label(self.player_of(color))
@@ -348,7 +481,7 @@ class HexGame:
             rect = self.blit(f"轮到 {CNAMES[color]}（{label}）{ai_note}",
                              (BOARD_W - 12, 12), self.font_m, TEXT_CLR, anchor="topright")
             pygame.draw.circle(self.screen, CCOLORS[color], (rect.left - 12, rect.centery), 7)
-        if self.state == S_PLAY and self.mode == 4:
+        if self.state == S_PLAY and self.mode == GameMode.AI_VS_AI:
             self.blit("已暂停" if self.paused else "观战中…",
                       (BOARD_W - 12, 40), self.font_s,
                       GOLD if self.paused else DIM_CLR, anchor="topright")
@@ -360,7 +493,7 @@ class HexGame:
         if self.hover:
             self.blit(f"悬停：{cell_name(*self.hover)}",
                       (12, WINDOW_H - 28), self.font_s, DIM_CLR)
-        self.blit("空格=开始/继续   Esc=退出", (BOARD_W - 12, WINDOW_H - 24),
+        self.blit("Ctrl+S=保存  F5=复盘  Esc=退出", (BOARD_W - 12, WINDOW_H - 24),
                   self.font_s, DIM_CLR, anchor="bottomright")
 
     def draw_start_screen(self):
@@ -386,17 +519,17 @@ class HexGame:
         self.mode_buttons = []
         y += 20
         mouse = pygame.mouse.get_pos()
-        for key, (text, desc) in sorted(MODES.items()):
+        for mode in sorted(GameMode):
             rect = pygame.Rect(cx - 195, y, 390, 46)
             hover = rect.collidepoint(mouse)
             pygame.draw.rect(self.screen, (70, 76, 92) if hover else (50, 54, 68),
                              rect, border_radius=8)
             pygame.draw.rect(self.screen, (110, 116, 132), rect, 1, border_radius=8)
-            self.blit(f"[{key}] {text}", (rect.x + 16, rect.centery),
+            self.blit(f"[{mode.value}] {mode.label}", (rect.x + 16, rect.centery),
                       self.font_m, TEXT_CLR, anchor="midleft")
-            self.blit(desc, (rect.right - 12, rect.centery),
+            self.blit(mode.description, (rect.right - 12, rect.centery),
                       self.font_s, DIM_CLR, anchor="midright")
-            self.mode_buttons.append((rect, key))
+            self.mode_buttons.append((rect, mode.value))
             y += 58
 
     def draw_win_banner(self):
@@ -428,6 +561,18 @@ class HexGame:
         self.blit(verdict, (cx, WINDOW_H // 2 + 35), self.font_m, TEXT_CLR, anchor="center")
         self.blit("点击或按空格再来一场   Esc 退出", (cx, WINDOW_H // 2 + 80),
                   self.font_s, DIM_CLR, anchor="center")
+
+    def draw_replay_banner(self):
+        if self.replay is None:
+            return
+        cx = BOARD_W // 2
+        text = f"复盘第 {self.replay.game_no} 局 · {self.replay.step}/{self.replay.total_moves} 手"
+        surface = self.font_m.render(text, True, GOLD)
+        rect = surface.get_rect(center=(cx, 104))
+        backdrop = pygame.Surface((rect.width + 28, rect.height + 14), pygame.SRCALPHA)
+        backdrop.fill((0, 0, 0, 180))
+        self.screen.blit(backdrop, backdrop.get_rect(center=rect.center))
+        self.screen.blit(surface, rect)
 
 
 def main():

@@ -1,4 +1,4 @@
-﻿# 海克斯棋（Hex）
+# 海克斯棋（Hex）
 
 双人落子类游戏。11×11 六边形棋盘，红方连通上下红色边界获胜，蓝方连通左右蓝色边界获胜。单局无和棋，每场两局、双方轮流先手（红方每局先行）。坐标先纵后横，如 `5C` = 第 5 行第 C 列。
 
@@ -67,6 +67,9 @@ start_game.bat --check
 
 - 鼠标点击空六边形落子；悬停时左下角显示坐标（先纵后横）
 - 空格：开始 / 继续 / 下一局 / 观战暂停
+- 右侧面板实时显示红蓝双方计时和最近手数
+- `Ctrl+S`：保存当前棋局为 JSON
+- `F5`：加载最近记录进入复盘；方向键切换手数，Esc 返回
 - Esc：退出
 - 胜负判定：红方连通上下边界、蓝方连通左右边界即胜，获胜通路以金圈高亮
 
@@ -96,7 +99,7 @@ check.bat
 也可单独运行以下命令：
 ```bash
 py hex_game_test.py
-py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py test_ai_worker.py test_ui.py
+py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py test_ai_worker.py test_ui.py test_p1.py
 ```
 
 ## AI 对比评测
@@ -146,12 +149,17 @@ python ai/train_v5.py --games 500 --seed 20261024 --output checkpoints/hex_model
 | `ai/worker.py` | 后台 AI 线程、回退策略和 AIResult |
 | `ui/board_renderer.py` | 棋盘几何、棋子、坐标和胜利路径绘制 |
 | `ui/history_panel.py` | 右侧下棋记录和 AI 状态面板 |
+| `game_mode.py` | 统一四种游戏模式及其人类玩家映射 |
+| `game_timer.py` | 基于单调时钟的红蓝双方计时器 |
+| `game_records.py` | JSON 保存、加载和逐步复盘 |
+| `records/README.md` | 游戏记录目录说明 |
 | `requirements-ai.txt` | 可选 PyTorch/NumPy 依赖 |
 | `checkpoints/README.md` | 模型权重提交和版本管理说明 |
 | `test_ai.py` | AI 契约、回退和战术测试 |
 | `test_mcts.py` | 编码、网络和 MCTS 测试（无 torch 时跳过） |
 | `test_ai_worker.py` | AI 后台线程、异常和回退测试 |
 | `test_ui.py` | 渲染几何、窗口布局和引擎集成测试 |
+| `test_p1.py` | 模式、计时和 JSON 复盘测试 |
 | `hex_match.py` | 自动对局：胜率统计、对局记录、失败棋局复现、耗时统计 |
 | `hex_game_test.py` | 自测脚本（7 组） |
 | `hex_engine.py` | 对局引擎：回合、判胜、两局换色、比分与历史记录 |

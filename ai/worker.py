@@ -1,8 +1,8 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """页面层使用的后台 AI 任务和不可变结果对象。"""
 from dataclasses import dataclass
 import threading
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 from hex_board import BLUE, HexBoard, RED
 
@@ -54,10 +54,30 @@ class AIWorker:
         self._ai_loader = ai_loader or _default_ai_loader
         self._result = None
         self._thread = None
+        self._progress_lock = threading.Lock()
+        self._progress = {
+            "phase": "idle",
+            "completed": 0,
+            "total": 0,
+            "elapsed_ms": 0.0,
+            "best_move": None,
+        }
 
     @property
     def result(self):
         return self._result
+
+    @property
+    def progress(self):
+        with self._progress_lock:
+            return dict(self._progress)
+
+    def _update_progress(self, **values):
+        with self._progress_lock:
+            self._progress.update(values)
+
+    def _on_ai_progress(self, progress):
+        self._update_progress(**progress)
 
     def is_alive(self):
         return bool(self._thread and self._thread.is_alive())
@@ -81,11 +101,17 @@ class AIWorker:
         selected_ai = self.ai
 
         if selected_ai is None:
+            self._update_progress(phase="loading")
             try:
                 selected_ai, init_error = self._ai_loader()
             except Exception as exc:
                 init_error = str(exc)
                 selected_ai = BasicAI()
+
+        self._update_progress(phase="thinking")
+        set_callback = getattr(selected_ai, "set_progress_callback", None)
+        if callable(set_callback):
+            set_callback(self._on_ai_progress)
 
         try:
             move, reason = selected_ai.choose_move(self.board, self.color)
@@ -102,6 +128,10 @@ class AIWorker:
                 fallback_error = str(fallback_exc)
                 move, reason = None, ""
 
+        self._update_progress(
+            phase="done" if fallback_error is None else "error",
+            best_move=move,
+        )
         self._result = AIResult(
             request_id=self.request_id,
             color=self.color,

@@ -55,6 +55,7 @@ class NeuralMCTSAI:
         self.c_puct = c_puct
         self.time_limit_ms = time_limit_ms
         self.load_ms = 0.0
+        self.progress_callback = None
 
         started = time.perf_counter()
         self.model = HexNetV5().to(self.device)
@@ -122,15 +123,25 @@ class NeuralMCTSAI:
     def reset(self):
         """MCTS 每步创建新树，不保留跨局状态。"""
 
+    def set_progress_callback(self, callback):
+        """??? AIWorker ????????????"""
+        self.progress_callback = callback
+
+    def _report_progress(self, progress):
+        if self.progress_callback is not None:
+            self.progress_callback(dict(progress))
+
     def choose_move(self, board, player):
         if player not in (RED, BLUE):
             raise ValueError(f"非法颜色编号: {player!r}")
 
         tactical = choose_tactical_move(board, player)
         if tactical is not None:
+            self._report_progress({"phase": "tactical", "best_move": tactical[0]})
             return tactical
 
-        move, _, _ = self.mcts.search(board, player)
+        self._report_progress({"phase": "thinking"})
+        move, _, _ = self.mcts.search(board, player, on_progress=self._report_progress)
         if not board.in_range(*move) or not board.is_empty(*move):
             raise RuntimeError(f"MCTS 返回非法着法: {move!r}")
         return move, f"MCTS {self.mcts.last_simulations}次模拟/{self.mcts.last_elapsed_ms:.0f}ms"

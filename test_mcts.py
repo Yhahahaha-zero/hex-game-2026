@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """MCTS、编码和网络输出测试；未安装 torch 时自动跳过。"""
 import importlib.util
 import unittest
@@ -22,6 +22,21 @@ class MCTSTest(unittest.TestCase):
         self.assertEqual(float(state[0, 0, 0]), 1.0)
         self.assertEqual(float(state[1, 10, 10]), 1.0)
         self.assertTrue(torch.all(state[2] == 1.0))
+
+    def test_mcts_reports_progress(self):
+        import torch
+        from ai.mcts import MCTS
+
+        class UniformModel(torch.nn.Module):
+            def forward(self, state):
+                return torch.zeros(state.shape[0], 121), torch.zeros(state.shape[0])
+
+        events = []
+        mcts = MCTS(UniformModel(), simulations=5, time_limit_ms=1000)
+        mcts.search(HexBoard(), RED, on_progress=events.append)
+        self.assertGreaterEqual(len(events), 2)
+        self.assertEqual(events[0]["completed"], 0)
+        self.assertEqual(events[-1]["completed"], 5)
 
     def test_network_output_shapes(self):
         import torch
