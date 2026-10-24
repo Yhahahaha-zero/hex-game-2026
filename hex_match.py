@@ -65,7 +65,7 @@ def play_game(red_ai, blue_ai):
     }
 
 
-def run_match(n, red_ai, blue_ai, quiet=False):
+def run_match(n, red_ai, blue_ai, quiet=False, path=RECORDS_FILE):
     """进行 n 局对弈，打印统计并保存记录，返回记录文档 dict。"""
     if n <= 0:
         raise ValueError("对局数量必须大于 0")
@@ -101,7 +101,7 @@ def run_match(n, red_ai, blue_ai, quiet=False):
         "summary": {"red_wins": red_wins, "blue_wins": blue_wins},
         "games": records,
     }
-    save_records(doc)
+    save_records(doc, path)
 
     print("\n===== 对局统计 =====")
     print(f"红方 AI：{red_ai.name}（每局先手）    蓝方 AI：{blue_ai.name}")
@@ -111,7 +111,7 @@ def run_match(n, red_ai, blue_ai, quiet=False):
     print(f"平均每局手数：{total_moves / n:.1f}")
     print(f"运行总耗时：{elapsed:.2f} 秒（平均 {elapsed / n * 1000:.0f} 毫秒/局）")
     print(f"AI 单步思考：平均 {total_ms_sum / total_moves:.2f} 毫秒，最大 {max_ms:.2f} 毫秒")
-    print(f"对局记录已保存：{RECORDS_FILE}")
+    print(f"对局记录已保存：{path}")
     return doc
 
 

@@ -1,4 +1,4 @@
-# 海克斯棋（Hex）
+﻿# 海克斯棋（Hex）
 
 双人落子类游戏。11×11 六边形棋盘，红方连通上下红色边界获胜，蓝方连通左右蓝色边界获胜。单局无和棋，每场两局、双方轮流先手（红方每局先行）。坐标先纵后横，如 `5C` = 第 5 行第 C 列。
 
@@ -75,9 +75,17 @@ py hex_match.py --replay-lost red        # 依次复现红方失败的全部棋�
 
 ## 运行自测
 
+
+一键检查（推荐）：
+
+```bat
+check.bat
+```
+
+也可单独运行以下命令：
 ```bash
 py hex_game_test.py
-py -m unittest -v test_hex_engine.py test_hex_match.py
+py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py
 ```
 
 ## 文件说明
@@ -91,6 +99,8 @@ py -m unittest -v test_hex_engine.py test_hex_match.py
 | `hex_game_test.py` | 自测脚本（7 组） |
 | `hex_engine.py` | 对局引擎：回合、判胜、两局换色、比分与历史记录 |
 | `test_hex_engine.py` | 引擎状态机与两局制流程单元测试（11 项） |
+| `test_hex_board.py` | 棋盘坐标、非法输入和兼容接口单元测试（9 项） |
+| `check.bat` | 一键运行游戏自测和全部单元测试 |
 | `test_hex_match.py` | 自动对局、记录和复盘回归测试（6 项） |
 | `docs/UI_ENGINE_CONTRACT.md` | 页面层与引擎层的接口和职责契约 |
 | `hex_records.json` | 对局记录（自动生成，可删除） |

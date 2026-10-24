@@ -1,29 +1,50 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 海克斯棋棋盘与规则核心（与界面无关，供图形界面、AI、自动对局三方共用）。
 
 坐标约定：轴向坐标 (q, r)，q = 列（横向，A-K），r = 行（纵向，1-11）。
 连通判定：红方连通上下边界（r=0 与 r=10），蓝方连通左右边界（q=0 与 q=10）。
 坐标文本先纵后横，如 "5C" = 第 5 行第 C 列。
+
+公开棋盘操作对非法坐标、非法颜色和非法落子统一抛出 IllegalMoveError。
+parse_cell() 是输入解析函数，非法文本仍按约定返回 None。
 """
 import re
 from collections import deque
 
-ROWS = COLS = 11                     # 11×11 棋盘
-EMPTY, RED, BLUE = 0, 1, 2           # 单元格三种状态
+ROWS = COLS = 11
+EMPTY, RED, BLUE = 0, 1, 2
 
-COLOR_NAMES = {RED: "红", BLUE: "蓝"}   # 协议/记录用的颜色名
+COLOR_NAMES = {RED: "红", BLUE: "蓝"}
 
 # 平顶六边形轴向坐标（q=列, r=行）的六个邻居方向
 DIRS = ((1, 0), (-1, 0), (1, -1), (0, -1), (0, 1), (-1, 1))
 
 
 class IllegalMoveError(ValueError):
-    """非法落子：越界坐标、位置已占用、非法玩家编号、对局已结束等。"""
+    """非法落子、非法坐标、非法颜色或对局结束后继续操作。"""
+
+
+def _valid_coord_value(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _require_coord(q, r):
+    """校验棋盘坐标，非法时统一抛出 IllegalMoveError。"""
+    if not (_valid_coord_value(q) and _valid_coord_value(r)
+            and 0 <= q < COLS and 0 <= r < ROWS):
+        raise IllegalMoveError(f"坐标越界或类型非法: ({q!r}, {r!r})")
+
+
+def _require_color(player):
+    """校验棋子颜色，非法时统一抛出 IllegalMoveError。"""
+    if not _valid_coord_value(player) or player not in (RED, BLUE):
+        raise IllegalMoveError(f"非法玩家编号: {player!r}")
 
 
 def cell_name(q, r):
-    """坐标文本：先纵（1-11）后横（A-K），如 5C = 第 5 行第 C 列。"""
+    """返回先纵后横的坐标文本，如 (2, 4) -> 5C。"""
+    _require_coord(q, r)
     return f"{r + 1}{chr(65 + q)}"
 
 
@@ -32,7 +53,8 @@ def parse_cell(s, strict=True):
 
     strict=True（默认，正式协议用）：只接受题目规定的“先纵后横”格式，
     例如 5C。拒绝 C5、05C、5c、夹空格、0A、12A 等非标准写法。
-    strict=False（显式开启的内部兼容模式）：允许先横后纵（C5）、
+
+    strict=False（显式开启的内部兼容模式）：允许先横后纵（C5），
     忽略首零与前后空格，但仍在 1-11 / A-K 范围内校验。
     """
     if not isinstance(s, str):
@@ -41,23 +63,21 @@ def parse_cell(s, strict=True):
         if re.fullmatch(r"(?:[1-9]|1[01])[A-K]", s) is None:
             return None
         return ord(s[-1]) - 65, int(s[:-1]) - 1
-    m = re.fullmatch(r"(\d{1,2})([A-Ka-k])|([A-Ka-k])(\d{1,2})", s.strip().upper())
-    if not m:
+    match = re.fullmatch(r"(\d{1,2})([A-Ka-k])|([A-Ka-k])(\d{1,2})",
+                         s.strip().upper())
+    if not match:
         return None
-    num, letter = (m.group(1), m.group(2)) if m.group(1) else (m.group(4), m.group(3))
-    q, r = ord(letter) - 65, int(num) - 1
+    number, letter = ((match.group(1), match.group(2)) if match.group(1)
+                      else (match.group(4), match.group(3)))
+    q, r = ord(letter) - 65, int(number) - 1
     return (q, r) if 0 <= q < COLS and 0 <= r < ROWS else None
 
 
 class _DSU:
-    """带边界掩码的并查集，用于 O(αN) 的连通性判定。
-
-    掩码含义：红方 bit0=顶边界(r=0)、bit1=底边界(r=10)；
-              蓝方 bit0=左边界(q=0)、bit1=右边界(q=10)。
-    某连通分量掩码 == 3，即该分量已同时触及己方两条边界。
-    """
+    """带边界掩码的并查集，用于 O(αN) 的连通性判定。"""
 
     def __init__(self, board, player):
+        _require_color(player)
         n = ROWS * COLS
         self.parent = list(range(n))
         self.mask = [0] * n
@@ -67,9 +87,11 @@ class _DSU:
                     continue
                 idx = r * COLS + q
                 if player == RED:
-                    self.mask[idx] = (1 if r == 0 else 0) | (2 if r == ROWS - 1 else 0)
+                    self.mask[idx] = ((1 if r == 0 else 0)
+                                      | (2 if r == ROWS - 1 else 0))
                 else:
-                    self.mask[idx] = (1 if q == 0 else 0) | (2 if q == COLS - 1 else 0)
+                    self.mask[idx] = ((1 if q == 0 else 0)
+                                      | (2 if q == COLS - 1 else 0))
         for r in range(ROWS):
             for q in range(COLS):
                 idx = r * COLS + q
@@ -79,18 +101,18 @@ class _DSU:
                     if board.grid[nr][nq] == player:
                         self.union(idx, nr * COLS + nq)
 
-    def find(self, x):                 # 路径压缩
+    def find(self, x):
         while self.parent[x] != x:
             self.parent[x] = self.parent[self.parent[x]]
             x = self.parent[x]
         return x
 
     def union(self, a, b):
-        ra, rb = self.find(a), self.find(b)
-        if ra == rb:
+        root_a, root_b = self.find(a), self.find(b)
+        if root_a == root_b:
             return
-        self.parent[ra] = rb
-        self.mask[rb] |= self.mask[ra]
+        self.parent[root_a] = root_b
+        self.mask[root_b] |= self.mask[root_a]
 
 
 class HexBoard:
@@ -98,29 +120,31 @@ class HexBoard:
 
     def __init__(self):
         self.grid = [[EMPTY] * COLS for _ in range(ROWS)]
-        self.history = []                              # (q, r, player) 落子序列
-        self._dsu_cache = {RED: None, BLUE: None}      # 落子/悔棋后失效重建
+        self.history = []
+        self._dsu_cache = {RED: None, BLUE: None}
 
     def in_range(self, q, r):
-        return 0 <= q < COLS and 0 <= r < ROWS
+        """坐标是否位于棋盘内。该谓词对非整数输入返回 False。"""
+        return (_valid_coord_value(q) and _valid_coord_value(r)
+                and 0 <= q < COLS and 0 <= r < ROWS)
 
     def neighbors(self, q, r):
-        """与 (q, r) 共边的六个（边界处更少）邻居。"""
+        """返回与 (q, r) 共边的六边形邻居；非法坐标抛出 IllegalMoveError。"""
+        _require_coord(q, r)
         for dq, dr in DIRS:
             nq, nr = q + dq, r + dr
             if self.in_range(nq, nr):
                 yield nq, nr
 
     def is_empty(self, q, r):
+        """指定坐标是否为空；非法坐标抛出 IllegalMoveError。"""
+        _require_coord(q, r)
         return self.grid[r][q] == EMPTY
 
     def place(self, q, r, player):
-        """落子。越界坐标、已占位置、非法玩家编号均抛 IllegalMoveError，
-        绝不静默覆盖棋盘。"""
-        if player not in (RED, BLUE):
-            raise IllegalMoveError(f"非法玩家编号: {player!r}")
-        if not self.in_range(q, r):
-            raise IllegalMoveError(f"坐标越界: ({q}, {r})")
+        """落子；越界、占用位置和非法颜色均抛出 IllegalMoveError。"""
+        _require_color(player)
+        _require_coord(q, r)
         if self.grid[r][q] != EMPTY:
             raise IllegalMoveError(f"位置已占用: {cell_name(q, r)}")
         self.grid[r][q] = player
@@ -136,14 +160,18 @@ class HexBoard:
         self._dsu_cache[player] = None
         return True
 
-    def legal_moves(self, player=None):
-        """全部空位；player 给定时只返回与该方棋子共边的空位（搜索剪枝，
-        该方尚无棋子时返回全部空位）。"""
+    def candidate_moves(self, player=None):
+        """返回搜索候选点。
+
+        player 为 None 时返回全部空位；给定颜色时返回与该方棋子共边的空位。
+        这是搜索剪枝接口，并不表示 Hex 规则只允许在这些位置落子。
+        """
         empties = [(q, r) for r in range(ROWS) for q in range(COLS)
                    if self.grid[r][q] == EMPTY]
         if player is None:
             return empties
-        cands = set()
+        _require_color(player)
+        candidates = set()
         has_piece = False
         for r in range(ROWS):
             for q in range(COLS):
@@ -152,11 +180,15 @@ class HexBoard:
                 has_piece = True
                 for nq, nr in self.neighbors(q, r):
                     if self.grid[nr][nq] == EMPTY:
-                        cands.add((nq, nr))
-        return empties if not has_piece else list(cands)
+                        candidates.add((nq, nr))
+        return empties if not has_piece else list(candidates)
 
-    # ---------- 连通性判定 ----------
+    def legal_moves(self, player=None):
+        """兼容旧接口，等价于 candidate_moves()。"""
+        return self.candidate_moves(player)
+
     def _dsu(self, player):
+        _require_color(player)
         dsu = self._dsu_cache[player]
         if dsu is None:
             dsu = _DSU(self, player)
@@ -164,34 +196,47 @@ class HexBoard:
         return dsu
 
     def has_won(self, player):
-        """并查集判定 player 是否已连通己方两条边界（每次落子后调用，很快）。"""
+        """player 是否已连通己方两条边界；非法颜色抛出 IllegalMoveError。"""
+        _require_color(player)
         dsu = self._dsu(player)
         for r in range(ROWS):
             for q in range(COLS):
                 idx = r * COLS + q
-                if self.grid[r][q] == player and dsu.mask[dsu.find(idx)] == 3:
+                if (self.grid[r][q] == player
+                        and dsu.mask[dsu.find(idx)] == 3):
                     return True
         return False
 
     def would_win(self, q, r, player):
-        """虚拟落子：若 player 在空位 (q, r) 落子，是否立即获胜（O(邻居数)，不改棋盘）。"""
+        """虚拟落子判断是否立即获胜，不修改棋盘。
+
+        非法坐标、已占位置或非法颜色均抛出 IllegalMoveError。
+        """
+        _require_color(player)
+        _require_coord(q, r)
+        if self.grid[r][q] != EMPTY:
+            raise IllegalMoveError(f"位置已占用: {cell_name(q, r)}")
         dsu = self._dsu(player)
         if player == RED:
-            m = (1 if r == 0 else 0) | (2 if r == ROWS - 1 else 0)
+            mask = ((1 if r == 0 else 0)
+                    | (2 if r == ROWS - 1 else 0))
         else:
-            m = (1 if q == 0 else 0) | (2 if q == COLS - 1 else 0)
+            mask = ((1 if q == 0 else 0)
+                    | (2 if q == COLS - 1 else 0))
         for nq, nr in self.neighbors(q, r):
             if self.grid[nr][nq] == player:
-                m |= dsu.mask[dsu.find(nr * COLS + nq)]
-        return m == 3
+                mask |= dsu.mask[dsu.find(nr * COLS + nq)]
+        return mask == 3
 
     def winning_path(self, player, algo="bfs"):
-        """从一侧边界向对侧边界搜索同色连通通路，返回通路单元格列表；未连通返回 None。
+        """返回一条连接己方两侧边界的通路；未连通返回 None。
 
-        红方：从 r=0（上边界）搜到 r=10（下边界）；蓝方：从 q=0（左）搜到 q=10（右）。
-        algo="bfs" 广度优先（队列）/"dfs" 深度优先（栈），连通性结论一致，通路形状不同。
-        复杂度 O(N)，N=121。
+        valid algo: bfs / dfs。非法颜色抛出 IllegalMoveError，
+        未知算法抛出 ValueError。
         """
+        _require_color(player)
+        if algo not in ("bfs", "dfs"):
+            raise ValueError(f"未知连通搜索算法: {algo!r}")
         if player == RED:
             starts = [(q, 0) for q in range(COLS) if self.grid[0][q] == RED]
         else:
@@ -205,7 +250,8 @@ class HexBoard:
         goal = None
         while frontier:
             q, r = pop()
-            if (player == RED and r == ROWS - 1) or (player == BLUE and q == COLS - 1):
+            if ((player == RED and r == ROWS - 1)
+                    or (player == BLUE and q == COLS - 1)):
                 goal = (q, r)
                 break
             for nq, nr in self.neighbors(q, r):
@@ -216,25 +262,26 @@ class HexBoard:
         if goal is None:
             return None
         path = []
-        cur = goal
-        while cur is not None:
-            path.append(cur)
-            cur = parent.get(cur)
+        current = goal
+        while current is not None:
+            path.append(current)
+            current = parent.get(current)
         return path
 
-    # ---------- 文本显示 ----------
     def render_text(self, path=None):
-        """控制台文本棋盘：奇数行右移两格模拟六边形错位。
-        符号：. 空、R 红、B 蓝、* 为 path 中的通路。"""
+        """控制台文本棋盘；path 中非法坐标会抛出 IllegalMoveError。"""
+        path_set = set(path or ())
+        for q, r in path_set:
+            _require_coord(q, r)
         lines = ["      " + "  ".join(chr(65 + q) for q in range(COLS))]
         for r in range(ROWS):
             indent = "  " if r % 2 == 1 else ""
             chars = []
             for q in range(COLS):
-                v = self.grid[r][q]
-                ch = "R" if v == RED else ("B" if v == BLUE else ".")
-                if path and (q, r) in path:
-                    ch = "*"
-                chars.append(ch)
+                value = self.grid[r][q]
+                char = "R" if value == RED else ("B" if value == BLUE else ".")
+                if (q, r) in path_set:
+                    char = "*"
+                chars.append(char)
             lines.append(f"{r + 1:>2}  " + indent + "  ".join(chars))
         return "\n".join(lines)

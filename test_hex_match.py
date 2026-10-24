@@ -1,10 +1,11 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """hex_match 自动对局、记录和复盘流程的回归测试。"""
 import contextlib
 import io
 import random
+import tempfile
 import unittest
-from unittest.mock import patch
+from pathlib import Path
 
 import hex_match as hm
 from hex_ai import BasicAI, RandomAI
@@ -41,11 +42,15 @@ class HexMatchTest(unittest.TestCase):
 
     def test_run_match_builds_summary_and_saves_records(self):
         output = io.StringIO()
-        with patch.object(hm, "save_records") as save_records:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "records.json"
             with contextlib.redirect_stdout(output):
-                document = hm.run_match(2, BasicAI(), RandomAI(), quiet=True)
+                document = hm.run_match(2, BasicAI(), RandomAI(),
+                                        quiet=True, path=path)
 
-        save_records.assert_called_once_with(document)
+            self.assertTrue(path.exists())
+            self.assertEqual(hm.load_records(path), document)
+
         self.assertEqual(document["game_count"], 2)
         self.assertEqual(len(document["games"]), 2)
         self.assertEqual(

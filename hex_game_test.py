@@ -1,10 +1,11 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """海克斯棋自测：坐标换算、邻居表、连通性判定（BFS/DFS/并查集）、
 随机对局、AI 策略、图形界面冒烟、自动对局与复盘。"""
 import contextlib
 import io
 import os
 import random
+import tempfile
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"   # 无窗口模式
 
@@ -129,19 +130,22 @@ assert len(g2.board.history) == 2
 g2.draw()
 print("[6] 图形界面冒烟（双人/人机/AI 走子）OK")
 
-# 7) 自动对局 10 局 + 记录保存/读取 + 复盘冒烟
+# 7) 自动对局 10 局 + 临时记录保存/读取 + 复盘冒烟
 random.seed(7)
-doc = hm.run_match(10, hx.create_ai("random"), hx.create_ai("basic"), quiet=True)
-s = doc["summary"]
-assert s["red_wins"] + s["blue_wins"] == 10
-assert len(doc["games"][0]["moves"]) == doc["games"][0]["moves_count"]
-rec = hm.load_records()["games"][0]
-buf = io.StringIO()
-with contextlib.redirect_stdout(buf):
-    hm.replay_game(rec, speed=0.0)
-out = buf.getvalue()
-assert "本局结束" in out and rec["winner"] in out
-print("[7] 自动对局 / 记录 / 复盘 OK "
+with tempfile.TemporaryDirectory() as temp_dir:
+    record_path = os.path.join(temp_dir, "hex_records.json")
+    doc = hm.run_match(10, hx.create_ai("random"), hx.create_ai("basic"),
+                       quiet=True, path=record_path)
+    s = doc["summary"]
+    assert s["red_wins"] + s["blue_wins"] == 10
+    assert len(doc["games"][0]["moves"]) == doc["games"][0]["moves_count"]
+    rec = hm.load_records(record_path)["games"][0]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        hm.replay_game(rec, speed=0.0)
+    out = buf.getvalue()
+    assert "本局结束" in out and rec["winner"] in out
+print("[7] 自动对局 / 临时记录 / 复盘 OK "
       f"（随机红 {s['red_wins']} : {s['blue_wins']} 基础蓝）")
 
 pygame = hg.pygame
