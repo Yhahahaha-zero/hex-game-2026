@@ -1,28 +1,47 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 对局引擎：统一负责局号、双方执色、当前回合、合法落子、判胜与获胜通路、
-交换回合、两局交换红蓝、总比分与本场结束、完整历史记录。
+两局交换红蓝、总比分、比赛结束状态和完整历史记录。
 
-GUI（hex_game.py）、自动比赛裁判（hex_match.py）、协议机器人（hex_bot.py）
-都必须通过 HexEngine 落子与判胜，禁止各自复制换手/判胜逻辑。
+页面层只能调用本引擎处理规则与对局状态，不得自行复制换手、判胜或计分逻辑。
 """
-from hex_board import (HexBoard, RED, BLUE, COLOR_NAMES, cell_name,
-                       IllegalMoveError)
+from hex_board import HexBoard, RED, BLUE, cell_name, IllegalMoveError
 
-MATCH_GAMES = 2      # 一场比赛固定两局，第二局交换红蓝（轮流先手）
+MATCH_GAMES = 2
+STATE_PLAYING = "playing"
+STATE_GAME_OVER = "game_over"
+STATE_MATCH_OVER = "match_over"
+VALID_COLORS = (RED, BLUE)
 
 
 class HexEngine:
     """一场两局制海克斯棋比赛引擎。
 
-    - 每局红方先行；第一局结束后 next_game() 交换双方红蓝；
-    - sides 是队伍（玩家/AI）名称，与颜色解耦，便于按队伍统计；
-    - 状态机：playing → game_over（一局结束）→ match_over（两局打完）。
+    页面集成所需的正式接口：
+      start_match()                 开始或重开一场比赛
+      play_move(q, r)               当前方落子
+      next_game()                   本局结束后进入下一局或结束比赛
+      current_player                当前执棋队伍名；非 playing 状态为 None
+      current_color                 当前执棋颜色；非 playing 状态为 None
+      winner                        本局胜方队伍名；尚未结束时为 None
+      match_score                   按队伍统计的比分快照
+      move_history                  整场比赛的手数记录快照
+
+    兼容接口：
+      reset_match() 等价于 start_match()
+      play() 等价于 play_move()
+      turn 等价于当前颜色（保留供旧代码使用）
     """
 
     def __init__(self, red_side="红队", blue_side="蓝队"):
-        self._base_sides = (str(red_side), str(blue_side))
-        self.reset_match()
+        red = str(red_side).strip()
+        blue = str(blue_side).strip()
+        if not red or not blue:
+            raise ValueError("队伍名称不能为空")
+        if red == blue:
+            raise ValueError("红蓝双方必须使用不同队伍名称")
+        self._base_sides = (red, blue)
+        self.start_match()
 
     # ---------- 只读属性 ----------
     @property
@@ -31,6 +50,21 @@ class HexEngine:
 
     @property
     def turn(self):
+        """兼容旧接口：当前颜色。"""
+        return self._turn
+
+    @property
+    def current_player(self):
+        """当前执棋队伍名；本局或比赛结束后返回 None。"""
+        if self._state != STATE_PLAYING:
+            return None
+        return self.side_of(self._turn)
+
+    @property
+    def current_color(self):
+        """当前执棋颜色；本局或比赛结束后返回 None。"""
+        if self._state != STATE_PLAYING:
+            return None
         return self._turn
 
     @property
@@ -39,7 +73,7 @@ class HexEngine:
 
     @property
     def state(self):
-        return self._state           # playing / game_over / match_over
+        return self._state
 
     @property
     def winner_color(self):
@@ -50,6 +84,21 @@ class HexEngine:
         return self._winner_side
 
     @property
+    def winner(self):
+        """本局胜方队伍名；尚未结束或尚未产生胜者时为 None。"""
+        return self._winner_side
+
+    @property
+    def match_score(self):
+        """按队伍统计的比分快照，修改返回值不会改变引擎内部状态。"""
+        return dict(self.scores)
+
+    @property
+    def move_history(self):
+        """整场比赛的手数快照，修改返回值不会改变引擎内部记录。"""
+        return tuple(dict(item) for item in self.history)
+
+    @property
     def win_path(self):
         return self._win_path
 
@@ -58,60 +107,81 @@ class HexEngine:
         return self._end_reason
 
     def side_of(self, color):
-        """执该颜色的队伍名。"""
+        """返回执指定颜色的队伍名。"""
+        if color not in VALID_COLORS:
+            raise IllegalMoveError(f"非法颜色编号: {color!r}")
         return self.red_side if color == RED else self.blue_side
 
     def color_of(self, side):
-        """该队伍在当前局执的颜色。"""
-        return RED if side == self.red_side else BLUE
+        """返回指定队伍在当前局所执的颜色。"""
+        if side == self.red_side:
+            return RED
+        if side == self.blue_side:
+            return BLUE
+        raise ValueError(f"未知队伍: {side!r}")
 
-    def legal_moves(self, player=None):
-        return self._board.legal_moves(player)
+    def legal_moves(self, color=None):
+        """返回空位；给定颜色时返回该方棋子的邻近候选点。"""
+        return self._board.legal_moves(color)
 
     # ---------- 流程 ----------
-    def reset_match(self):
+    def start_match(self):
         """开始一场新比赛：第 1 局，红队执红先行，比分与历史清零。"""
         self.red_side, self.blue_side = self._base_sides
-        self.scores = {self.red_side: 0, self.blue_side: 0}   # 按队伍记胜局数
-        self.history = []      # 全部手数（跨局）：
-                               # {game, no, color, side, cell, q, r, ms, reason}
-        self.results = []      # 每局结果：{game, winner_color, winner_side, reason}
+        self.scores = {self.red_side: 0, self.blue_side: 0}
+        self.history = []
+        self.results = []
         self._new_game(1)
+
+    def reset_match(self):
+        """兼容旧接口：重开比赛。"""
+        self.start_match()
 
     def _new_game(self, game_no):
         self._board = HexBoard()
         self._game_no = game_no
-        self._turn = RED                      # 每局红方先行
+        self._turn = RED
         self._move_no = 1
-        self._state = "playing"
+        self._state = STATE_PLAYING
         self._winner_color = None
         self._winner_side = None
         self._win_path = None
         self._end_reason = None
 
-    def play(self, q, r, ms=0.0, reason=None):
-        """当前方在 (q, r) 落子。非法落子抛 IllegalMoveError。
-        返回该手是否取胜（True 时本局进入 game_over）。"""
-        if self._state != "playing":
+    def play_move(self, q, r, ms=0.0, reason=None):
+        """当前方在 (q, r) 落子；获胜时返回 True，否则返回 False。"""
+        if self._state != STATE_PLAYING:
             raise IllegalMoveError("本局已结束，不能再落子")
-        player = self._turn
-        self._board.place(q, r, player)       # 越界/已占/非法玩家 → IllegalMoveError
+        color = self._turn
+        self._board.place(q, r, color)
         self.history.append({
-            "game": self._game_no, "no": self._move_no,
-            "color": player, "side": self.side_of(player),
-            "cell": cell_name(q, r), "q": q, "r": r,
-            "ms": round(float(ms), 2), "reason": reason or ""})
-        if self._board.has_won(player):
-            self._end_game(player, "connect")
+            "game": self._game_no,
+            "no": self._move_no,
+            "color": color,
+            "side": self.side_of(color),
+            "cell": cell_name(q, r),
+            "q": q,
+            "r": r,
+            "ms": round(float(ms), 2),
+            "reason": reason or "",
+        })
+        if self._board.has_won(color):
+            self._end_game(color, "connect")
             return True
         self._move_no += 1
-        self._turn = BLUE if player == RED else RED
+        self._turn = BLUE if color == RED else RED
         return False
 
+    def play(self, q, r, ms=0.0, reason=None):
+        """兼容旧接口：等价于 play_move()。"""
+        return self.play_move(q, r, ms=ms, reason=reason)
+
     def force_win(self, winner_color, reason):
-        """裁判裁定本局结果（超时判负、非法落子判负等），无需在棋盘上落子。"""
-        if self._state != "playing":
+        """裁判裁定本局结果；无需在棋盘上落子。"""
+        if self._state != STATE_PLAYING:
             raise IllegalMoveError("本局已结束，不能裁定")
+        if winner_color not in VALID_COLORS:
+            raise IllegalMoveError(f"非法颜色编号: {winner_color!r}")
         self._end_game(winner_color, reason)
         return True
 
@@ -121,36 +191,39 @@ class HexEngine:
         self._end_reason = reason
         self._win_path = self._board.winning_path(winner_color)
         self.scores[self._winner_side] += 1
-        self.results.append({"game": self._game_no,
-                             "winner_color": winner_color,
-                             "winner_side": self._winner_side,
-                             "reason": reason})
-        self._state = "game_over"
+        self.results.append({
+            "game": self._game_no,
+            "winner_color": winner_color,
+            "winner_side": self._winner_side,
+            "reason": reason,
+        })
+        self._state = STATE_GAME_OVER
 
     def next_game(self):
-        """进入下一局：双方交换红蓝（轮流先手）。第二局结束后进入 match_over。"""
-        if self._state == "match_over":
+        """本局结束后进入下一局；第二局结束后进入 match_over。"""
+        if self._state == STATE_MATCH_OVER:
             raise IllegalMoveError("比赛已结束")
-        if self._state == "playing":
+        if self._state == STATE_PLAYING:
             raise IllegalMoveError("本局尚未结束")
         if self._game_no >= MATCH_GAMES:
-            self._state = "match_over"
-            return
+            self._state = STATE_MATCH_OVER
+            return self._state
         self.red_side, self.blue_side = self.blue_side, self.red_side
         self._new_game(self._game_no + 1)
+        return self._state
 
     def match_winner(self):
-        """本场胜者队伍名；1:1 返回 None（单局无和棋，总分可平）。"""
-        if self._state != "match_over":
+        """本场胜者队伍名；两局 1:1 时返回 None。"""
+        if self._state != STATE_MATCH_OVER:
             return None
-        a, b = self._base_sides
-        if self.scores[a] > self.scores[b]:
-            return a
-        if self.scores[b] > self.scores[a]:
-            return b
+        first_side, second_side = self._base_sides
+        if self.scores[first_side] > self.scores[second_side]:
+            return first_side
+        if self.scores[second_side] > self.scores[first_side]:
+            return second_side
         return None
 
     def game_moves(self, game_no=None):
-        """返回指定局（默认当前局）的手数记录列表。"""
-        g = self._game_no if game_no is None else game_no
-        return [h for h in self.history if h["game"] == g]
+        """返回指定局（默认当前局）的手数记录快照。"""
+        target = self._game_no if game_no is None else game_no
+        return tuple(dict(item) for item in self.history if item["game"] == target)

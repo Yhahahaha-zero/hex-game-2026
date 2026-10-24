@@ -77,6 +77,7 @@ py hex_match.py --replay-lost red        # 依次复现红方失败的全部棋�
 
 ```bash
 py hex_game_test.py
+py -m unittest -v test_hex_engine.py
 ```
 
 ## 文件说明
@@ -88,4 +89,7 @@ py hex_game_test.py
 | `hex_ai.py` | AI：直接获胜 > 紧急防守 > 中心偏好随机；预留路径评估扩展点 |
 | `hex_match.py` | 自动对局：胜率统计、对局记录、失败棋局复现、耗时统计 |
 | `hex_game_test.py` | 自测脚本（7 组） |
+| `hex_engine.py` | 对局引擎：回合、判胜、两局换色、比分与历史记录 |
+| `test_hex_engine.py` | 引擎状态机与两局制流程单元测试（11 项） |
+| `docs/UI_ENGINE_CONTRACT.md` | 页面层与引擎层的接口和职责契约 |
 | `hex_records.json` | 对局记录（自动生成，可删除） |
