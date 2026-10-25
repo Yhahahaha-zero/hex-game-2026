@@ -185,7 +185,8 @@ class MCTS:
         ]
         return tuple(sorted(stats, key=lambda item: (item.visits, item.prior), reverse=True))
 
-    def search_result(self, board, player, on_progress=None, heuristic_scores=None):
+    def search_result(self, board, player, on_progress=None,
+                      heuristic_scores=None, cancel_event=None):
         started = time.perf_counter()
         deadline = started + self.time_limit_ms / 1000.0
         root = MCTSNode(board=self.copy_board(board), player=player)
@@ -210,6 +211,8 @@ class MCTS:
         emit_progress(0)
         completed = 0
         while completed < self.simulations:
+            if cancel_event is not None and cancel_event.is_set():
+                break
             if completed > 0 and time.perf_counter() >= deadline:
                 break
             self.simulate(root)
@@ -218,6 +221,19 @@ class MCTS:
                 emit_progress(completed)
 
         candidates = self._candidate_stats(root)
+        if not candidates:
+            move = max(
+                root.priors,
+                key=lambda candidate: (root.priors[candidate], candidate),
+            )
+            candidates = (
+                ChildStat(
+                    move=move,
+                    visits=0,
+                    prior=root.priors[move],
+                    value=0.0,
+                ),
+            )
         best = candidates[0]
         self.last_simulations = completed
         self.last_elapsed_ms = (time.perf_counter() - started) * 1000
@@ -231,9 +247,12 @@ class MCTS:
             root=root,
         )
 
-    def search(self, board, player, on_progress=None, heuristic_scores=None):
-        """???????? ``(move, visits, root)``?"""
+    def search(self, board, player, on_progress=None, heuristic_scores=None,
+               cancel_event=None):
+        """Return (move, visits, root) and support cooperative cancellation."""
         result = self.search_result(
-            board, player, on_progress=on_progress, heuristic_scores=heuristic_scores
+            board, player, on_progress=on_progress,
+            heuristic_scores=heuristic_scores,
+            cancel_event=cancel_event,
         )
         return result.move, result.visits, result.root

@@ -161,7 +161,7 @@ def _minimax_preview(board, player, candidates, max_candidates=8, reply_limit=6)
     return ranked
 
 
-def _mcts(board, player, candidates, time_limit, rng):
+def _mcts(board, player, candidates, time_limit, rng, cancel_event=None):
     from ai.evaluation import clone_board
 
     if not candidates:
@@ -170,6 +170,8 @@ def _mcts(board, player, candidates, time_limit, rng):
     started = time.perf_counter()
     iterations = 0
     for move in candidates[:min(8, len(candidates))]:
+        if cancel_event is not None and cancel_event.is_set():
+            break
         trial = clone_board(board)
         trial.place(move[0], move[1], player)
         winner = player if trial.has_won(player) else _rollout_winner(trial, BLUE if player == RED else RED, rng)
@@ -181,6 +183,8 @@ def _mcts(board, player, candidates, time_limit, rng):
 
     exploration = 1.15
     while time.perf_counter() - started < time_limit:
+        if cancel_event is not None and cancel_event.is_set():
+            break
         total = max(1, sum(value[0] for value in stats.values()))
         unvisited = [move for move, (visits, _) in stats.items() if visits == 0]
         if unvisited:
@@ -228,9 +232,14 @@ class HybridAI:
         self.time_limit_ms = int(self.time_limit * 1000)
         self.candidate_limit = max(20, int(candidate_limit))
         self.rng = random.Random(seed)
+        self._cancel_event = None
 
     def set_seed(self, seed):
         self.rng.seed(seed)
+
+    def set_cancel_event(self, cancel_event):
+        self._cancel_event = cancel_event
+
 
     def choose_move(self, board, player):
         legal = board.legal_moves()
@@ -275,7 +284,8 @@ class HybridAI:
             candidates = [move for _, move in preview[:min(8, len(preview))]]
 
         move, iterations = _mcts(
-            board, player, candidates, self.time_limit, self.rng
+            board, player, candidates, self.time_limit, self.rng,
+            cancel_event=self._cancel_event,
         )
         if move is not None:
             reason = f"Hybrid MCTS {iterations}次"

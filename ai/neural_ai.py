@@ -64,6 +64,7 @@ class NeuralMCTSAI:
         self.time_limit_ms = time_limit_ms
         self.load_ms = 0.0
         self.progress_callback = None
+        self._cancel_event = None
 
         started = time.perf_counter()
         self.model = HexNetV5().to(self.device)
@@ -128,6 +129,9 @@ class NeuralMCTSAI:
         except (AttributeError, RuntimeError):
             pass
 
+    def set_cancel_event(self, cancel_event):
+        self._cancel_event = cancel_event
+
     def reset(self):
         """MCTS 每步创建新树，不保留跨局状态。"""
 
@@ -182,6 +186,7 @@ class NeuralMCTSAI:
             player,
             on_progress=self._report_progress,
             heuristic_scores=heuristic_scores,
+            cancel_event=self._cancel_event,
         )
         if not board.in_range(*move) or not board.is_empty(*move):
             raise RuntimeError(f"MCTS 返回非法着法: {move!r}")

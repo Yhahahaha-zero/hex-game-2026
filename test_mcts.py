@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """MCTS、编码和网络输出测试；未安装 torch 时自动跳过。"""
 import importlib.util
+import threading
 import unittest
 
 from hex_board import BLUE, HexBoard, RED
@@ -52,6 +53,24 @@ class MCTSTest(unittest.TestCase):
         self.assertGreaterEqual(len(events), 2)
         self.assertEqual(events[0]["completed"], 0)
         self.assertEqual(events[-1]["completed"], 5)
+
+    def test_mcts_cancellation_returns_partial_result(self):
+        import torch
+        from ai.mcts import MCTS
+
+        class UniformModel(torch.nn.Module):
+            def forward(self, state):
+                return torch.zeros(state.shape[0], 121), torch.zeros(state.shape[0])
+
+        cancel_event = threading.Event()
+        cancel_event.set()
+        mcts = MCTS(UniformModel(), simulations=100, time_limit_ms=1000)
+        result = mcts.search_result(
+            HexBoard(), RED, cancel_event=cancel_event
+        )
+        self.assertEqual(result.simulations, 0)
+        self.assertTrue(HexBoard().is_empty(*result.move))
+        self.assertEqual(len(result.children), 1)
 
     def test_network_output_shapes(self):
         import torch

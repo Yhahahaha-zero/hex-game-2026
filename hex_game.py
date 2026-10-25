@@ -90,6 +90,7 @@ class HexGame:
         self.ai_status_message = ""
         self.ai_request_id = 0
         self.ai_worker = None
+        self._retired_workers = []
         self.last_search_stats = ()
         self.mode_buttons = []
         self.panel_message = ""
@@ -150,7 +151,26 @@ class HexGame:
         else:
             self.last_move = None
 
+    def _cancel_ai_worker(self, timeout=0.6):
+        for retired in self._retired_workers:
+            retired.cancel()
+        worker = self.ai_worker
+        if worker is None:
+            self._prune_retired_workers()
+            return True
+        worker.cancel()
+        stopped = worker.join(timeout)
+        if not stopped:
+            self._retired_workers.append(worker)
+        self.ai_worker = None
+        self._prune_retired_workers()
+        return stopped
+
+    def _prune_retired_workers(self):
+        self._retired_workers = [w for w in self._retired_workers if w.is_alive()]
+
     def _reset_transient_state(self):
+        self._cancel_ai_worker()
         self.hover = None
         self.win_at = None
         self.last_move_at = None
@@ -249,6 +269,7 @@ class HexGame:
         try:
             document = load_record(path)
             self.replay = ReplaySession(document)
+            self._cancel_ai_worker()
             self.replay_return_state = self.state
             self.timer.pause()
             self.state = S_REPLAY
@@ -393,7 +414,8 @@ class HexGame:
         if result is None:
             return
         if (result.request_id != self.ai_request_id or self.state != S_PLAY
-                or self.engine.current_color != result.color):
+                or self.engine.current_color != result.color
+                or result.cancelled):
             return
         if result.ai is not None:
             self.ai = result.ai
@@ -436,6 +458,9 @@ class HexGame:
     def update_ai(self):
         if self.state != S_PLAY or self.is_human_turn():
             return
+        self._prune_retired_workers()
+        if self._retired_workers:
+            return
         now = pygame.time.get_ticks()
         if self.pending_move is not None:
             if now >= self.ai_act_at:
@@ -451,10 +476,18 @@ class HexGame:
                 self._consume_ai_result(worker.result)
                 return
         color = self.engine.current_color
+        self.ai_request_id += 1
         self.ai_worker = AIWorker(self.board, color, self.ai_request_id, ai=self.ai)
         self.ai_worker.start()
 
     def quit(self):
+        self._cancel_ai_worker(timeout=1.0)
+        for worker in self._retired_workers:
+            worker.cancel()
+            worker.join(0.2)
+        self._retired_workers = [
+            worker for worker in self._retired_workers if worker.is_alive()
+        ]
         self.sound.quit()
         pygame.quit()
         raise SystemExit

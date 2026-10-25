@@ -1,5 +1,6 @@
-# -*- coding: utf-8 -*-
-"""AIWorker 和 AIResult 的单元测试。"""
+﻿# -*- coding: utf-8 -*-
+"""AIWorker、取消信号和 AIResult 生命周期测试。"""
+import threading
 import unittest
 
 from ai.worker import AIResult, AIWorker
@@ -15,6 +16,23 @@ class StaticAI:
 
     def choose_move(self, board, player):
         return self.move, self.reason
+
+
+class BlockingAI:
+    name = "阻塞AI"
+
+    def __init__(self):
+        self.started = threading.Event()
+        self.cancel_event = None
+
+    def set_cancel_event(self, cancel_event):
+        self.cancel_event = cancel_event
+
+    def choose_move(self, board, player):
+        self.started.set()
+        while not self.cancel_event.wait(0.01):
+            continue
+        raise RuntimeError("cancelled")
 
 
 class ProgressAI:
@@ -56,6 +74,7 @@ class AIWorkerTest(unittest.TestCase):
         result = worker.result
         self.assertIsInstance(result, AIResult)
         self.assertTrue(result.ok)
+        self.assertFalse(result.cancelled)
         self.assertEqual(result.request_id, 7)
         self.assertEqual(result.color, RED)
         self.assertEqual(result.move, (5, 5))
@@ -84,6 +103,19 @@ class AIWorkerTest(unittest.TestCase):
         self.assertEqual(progress["best_move"], (5, 5))
         self.assertEqual(progress["phase"], "done")
         self.assertEqual(worker.result.search_stats[0]["move"], (5, 5))
+
+    def test_cancel_stops_cooperative_ai(self):
+        ai = BlockingAI()
+        worker = AIWorker(HexBoard(), RED, 11, ai=ai)
+        worker.start()
+        self.assertTrue(ai.started.wait(1.0))
+        worker.cancel()
+        self.assertTrue(worker.join(1.5))
+        self.assertTrue(worker.cancelled)
+        self.assertFalse(worker.result.ok)
+        self.assertTrue(worker.result.cancelled)
+        self.assertIsNone(worker.result.move)
+        self.assertEqual(worker.progress["phase"], "cancelled")
 
     def test_invalid_ai_move_triggers_fallback(self):
         worker = AIWorker(HexBoard(), RED, 9, ai=StaticAI(move=(99, 99)))

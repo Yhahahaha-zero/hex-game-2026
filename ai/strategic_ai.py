@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Deterministic tactical AI with optional distance, threat and bridge scoring."""
 from ai.evaluation import score_moves
 from ai.tactics import (block_multiple_threats, boundary_bridge_bonus,
@@ -23,6 +23,10 @@ class StrategicAI:
         self.use_bridges = bool(use_bridges)
         self.candidate_limit = max(12, int(candidate_limit))
         self.safety_reply_limit = max(4, int(safety_reply_limit))
+        self._cancel_event = None
+
+    def set_cancel_event(self, cancel_event):
+        self._cancel_event = cancel_event
 
     @staticmethod
     def _center_score(q, r):
@@ -60,6 +64,8 @@ class StrategicAI:
         adjusted = []
         danger_found = False
         for base_score, move in ranked[:20]:
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                break
             trial = type(board)()
             trial.grid = [row[:] for row in board.grid]
             trial.history = list(board.history)
