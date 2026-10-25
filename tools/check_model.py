@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """验证神经网络权重能否加载并完成一次合法落子。"""
 import argparse
 import hashlib
@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from ai.neural_ai import DEFAULT_MODEL_PATH, NeuralMCTSAI
+from ai.neural_ai import NeuralMCTSAI, resolve_model_path
 from hex_board import HexBoard, RED
 
 
@@ -24,9 +24,13 @@ def sha256(path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="检查神经 AI 模型")
-    parser.add_argument("model", nargs="?", type=Path, default=DEFAULT_MODEL_PATH)
+    parser.add_argument("model", nargs="?", type=Path, default=None)
     parser.add_argument("--time-limit-ms", type=int, default=200)
     args = parser.parse_args(argv)
+    selected_metadata = {}
+    if args.model is None:
+        args.model, selected_metadata = resolve_model_path()
+        print(f"selection={selected_metadata}")
 
     if not args.model.is_file():
         print(f"[ERROR] 模型不存在：{args.model}")

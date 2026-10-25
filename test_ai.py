@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """AI 契约、模型回退和只读行为测试。"""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,8 @@ from pathlib import Path
 from ai.ai_factory import create_competition_ai
 from ai.hybrid_ai import HybridAI
 from ai.neural_ai import (NeuralMCTSAI, choose_tactical_move,
-                         create_ai_with_fallback)
+                         create_ai_with_fallback, load_selected_model,
+                         resolve_model_path)
 from hex_ai import BasicAI
 from hex_board import BLUE, HexBoard, RED
 
@@ -23,6 +25,31 @@ class AIContractTest(unittest.TestCase):
         self.assertTrue(board.is_empty(*move))
         self.assertEqual(board.grid, before_grid)
         self.assertEqual(board.history, before_history)
+
+    def test_selected_model_manifest_is_valid(self):
+        model_path, metadata = load_selected_model()
+        self.assertTrue(model_path.is_file())
+        self.assertEqual(metadata["model_file"], "hex_model_v5.pt")
+        self.assertEqual(metadata["model_version"], "5.0.0")
+        self.assertEqual(metadata["selected_games"], 2000)
+        resolved_path, resolved_metadata = resolve_model_path()
+        self.assertEqual(resolved_path, model_path)
+        self.assertEqual(resolved_metadata["sha256"], metadata["sha256"])
+
+    def test_selected_model_hash_mismatch_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "fake.pt").write_bytes(b"fake model")
+            manifest = root / "selected_model.json"
+            manifest.write_text(json.dumps({
+                "schema_version": 1,
+                "model_file": "fake.pt",
+                "model_version": "5.0.0",
+                "encoding_version": "3x11x11-v1",
+                "sha256": "0" * 64,
+            }), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "SHA256"):
+                load_selected_model(manifest)
 
     def test_missing_model_falls_back_to_basic_ai(self):
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """V5 policy/value 网络与有限时间 MCTS AI。"""
+import hashlib
+import json
 import random
 import time
 from pathlib import Path
@@ -14,8 +16,55 @@ from hex_board import BLUE, RED
 
 MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 DEFAULT_MODEL_PATH = MODEL_DIR / "hex_model_v5.pt"
+SELECTED_MODEL_MANIFEST = MODEL_DIR / "selected_model.json"
 MODEL_VERSION = "5.0.0"
 ENCODING_VERSION = "3x11x11-v1"
+
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_selected_model(manifest_path=None):
+    """Load and validate the single deployment-model manifest."""
+    manifest_path = Path(manifest_path or SELECTED_MODEL_MANIFEST)
+    if not manifest_path.is_file():
+        raise FileNotFoundError(f"?????????: {manifest_path}")
+    document = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    if document.get("schema_version") != 1:
+        raise ValueError(f"???? selected_model schema: {document.get('schema_version')!r}")
+    model_file = document.get("model_file")
+    if not isinstance(model_file, str) or not model_file:
+        raise ValueError("selected_model ?? model_file")
+    relative = Path(model_file)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(f"selected_model ??????: {model_file!r}")
+    model_path = (manifest_path.parent / relative).resolve()
+    if not model_path.is_file():
+        raise FileNotFoundError(f"???????: {model_path}")
+    expected_hash = str(document.get("sha256", "")).lower()
+    if not expected_hash or file_sha256(model_path) != expected_hash:
+        raise RuntimeError(f"???? SHA256 ????: {model_path}")
+    if document.get("model_version") not in (None, "", MODEL_VERSION):
+        raise ValueError(f"selected_model ???????: {document.get('model_version')!r}")
+    if document.get("encoding_version") not in (None, "", ENCODING_VERSION):
+        raise ValueError(
+            f"selected_model ???????: {document.get('encoding_version')!r}"
+        )
+    return model_path, document
+
+
+def resolve_model_path(model_path=None):
+    """Resolve explicit path or the deployment model selected in JSON."""
+    if model_path is not None:
+        return Path(model_path).expanduser().resolve(), {}
+    if SELECTED_MODEL_MANIFEST.is_file():
+        return load_selected_model()
+    return DEFAULT_MODEL_PATH.resolve(), {}
 
 
 def choose_tactical_move(board, player):
@@ -43,9 +92,9 @@ class NeuralMCTSAI:
 
     def __init__(self, model_path=None, device=None, simulations=100,
                  c_puct=1.5, time_limit_ms=200, seed=None):
-        self.model_path = Path(model_path or DEFAULT_MODEL_PATH).expanduser().resolve()
+        self.model_path, self.model_selection = resolve_model_path(model_path)
         if not self.model_path.is_file():
-            raise FileNotFoundError(f"找不到神经网络模型：{self.model_path}")
+            raise FileNotFoundError(f"??????????{self.model_path}")
 
         try:
             import torch

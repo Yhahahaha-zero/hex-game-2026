@@ -12,6 +12,11 @@ rem Find a Python interpreter that can actually run pip.
 rem A py.exe launcher may exist without any registered Python installation.
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
+    set "PYTHON_ARGS="
+    goto :python_found
+)
 
 for /f "delims=" %%P in ('where py 2^>nul') do (
     "%%~P" -3 -m pip --version >nul 2>nul
