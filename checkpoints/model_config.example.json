@@ -1,9 +1,0 @@
-﻿{
-  "name": "HexMCTS-v5",
-  "version": "5.0.0",
-  "encoding_version": "3x11x11-v1",
-  "policy_size": 121,
-  "device": "cpu",
-  "time_limit_ms": 200,
-  "model_file": "hex_model_v5.pt"
-}

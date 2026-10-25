@@ -29,12 +29,13 @@ from hex_board import BLUE, RED
 from hex_engine import HexEngine
 from hex_match import play_game
 
-CHECKPOINT_DIR = PROJECT_ROOT / "checkpoints"
+CHECKPOINT_DIR = PROJECT_ROOT.parent / "models"
+EVALUATION_DIR = PROJECT_ROOT.parent / "evaluation" / "training"
 DEFAULT_MODEL_PATH = CHECKPOINT_DIR / "hex_model_v5.pt"
 DEFAULT_BEST_PATH = CHECKPOINT_DIR / "hex_model_v5_best.pt"
 DEFAULT_LATEST_PATH = CHECKPOINT_DIR / "hex_model_v5_latest.pt"
-DEFAULT_BEST_JSON = CHECKPOINT_DIR / "best.json"
-DEFAULT_HISTORY_PATH = CHECKPOINT_DIR / "training_history.csv"
+DEFAULT_BEST_JSON = EVALUATION_DIR / "best.json"
+DEFAULT_HISTORY_PATH = EVALUATION_DIR / "training_history.csv"
 
 
 @dataclass(frozen=True)

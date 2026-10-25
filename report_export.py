@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """棋局报告、CSV 和界面截图导出。"""
 import csv
 from datetime import datetime
@@ -12,7 +12,8 @@ from game_records import save_match_record
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-REPORTS_DIR = PROJECT_ROOT / "reports"
+WORKSPACE_ROOT = PROJECT_ROOT.parent
+REPORTS_DIR = WORKSPACE_ROOT / "artifacts" / "reports"
 
 
 def capture_screen(screen, output_dir=None, name=None):

@@ -10,7 +10,8 @@ from hex_engine import STATE_MATCH_OVER
 
 SCHEMA_VERSION = 1
 PROJECT_ROOT = Path(__file__).resolve().parent
-RECORD_DIR = PROJECT_ROOT / "records"
+WORKSPACE_ROOT = PROJECT_ROOT.parent
+RECORD_DIR = WORKSPACE_ROOT / "artifacts" / "records"
 
 
 def build_match_record(engine, mode, player_labels, timer=None):

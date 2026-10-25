@@ -9,7 +9,7 @@ from ai.tactics import bridge_move_bonus, creates_double_threat
 from hex_ai import BasicAI, winning_moves
 from hex_board import BLUE, RED
 
-MODEL_DIR = Path(__file__).resolve().parents[1] / "checkpoints"
+MODEL_DIR = Path(__file__).resolve().parents[2] / "models"
 DEFAULT_MODEL_PATH = MODEL_DIR / "hex_model_v5.pt"
 MODEL_VERSION = "5.0.0"
 ENCODING_VERSION = "3x11x11-v1"

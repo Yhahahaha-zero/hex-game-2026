@@ -37,7 +37,7 @@ from hex_ai import create_ai
 from hex_match import play_game
 
 BUILTIN_AIS = ("basic", "random", "neural", "hybrid")
-DEFAULT_OUTPUT_DIR = "benchmark_results"
+DEFAULT_OUTPUT_DIR = str(PROJECT_ROOT.parent / "evaluation" / "benchmark_results")
 DEFAULT_GAMES = 500
 DEFAULT_SEED = 20261024
 RED_LABEL = "红"
