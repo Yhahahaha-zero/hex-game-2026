@@ -78,4 +78,7 @@ def create_ai(name):
     if key in ("hybrid", "smart"):
         from ai.hybrid_ai import HybridAI
         return HybridAI()
+    if key == "strategic":
+        from ai.strategic_ai import StrategicAI
+        return StrategicAI()
     raise ValueError(f"?? AI ??: {name}")

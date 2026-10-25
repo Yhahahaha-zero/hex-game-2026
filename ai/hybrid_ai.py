@@ -6,8 +6,8 @@ import time
 
 from ai.evaluation import (clone_board, connection_cost, score_moves,
                            shortest_path_cells)
-from ai.tactics import (block_multiple_threats, bridge_move_bonus,
-                        find_double_threat_moves,
+from ai.tactics import (block_multiple_threats, boundary_bridge_bonus,
+                        bridge_score_map, find_double_threat_moves,
                         opponent_double_threat_replies, opponent_threats,
                         shortest_path_key_weights)
 from hex_ai import winning_moves
@@ -65,14 +65,15 @@ def _ranked_candidates(board, player, limit=24):
     candidates.update(board.legal_moves(player))
     candidates = [move for move in candidates if board.is_empty(*move)]
     distance_scores = score_moves(board, player, candidates)
-    bridge_bonus = bridge_move_bonus(board, player)
+    bridge_scores = bridge_score_map(board, player)
     key_weights = shortest_path_key_weights(board, player)
     scored = []
     for move in candidates:
         score = distance_scores.get(move, 0.0)
         score += _local_score(board, move[0], move[1], player) * 1.5
         score += _center_score(*move) * 0.25
-        score += bridge_bonus.get(move, 0) * 4.0
+        score += bridge_scores.get(move, 0.0)
+        score += boundary_bridge_bonus(board, move[0], move[1], player)
         score += key_weights.get(move, 0) * 1.5
         scored.append((score, move))
     scored.sort(key=lambda item: (-item[0], item[1][0], item[1][1]))

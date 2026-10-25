@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """比赛 AI 工厂：默认使用实测更强的 HybridAI。"""
 import os
 
@@ -17,6 +17,12 @@ def create_competition_ai(engine=None):
     if engine == "neural":
         from ai.neural_ai import create_ai_with_fallback
         return create_ai_with_fallback()
+    if engine == "strategic":
+        try:
+            from ai.strategic_ai import StrategicAI
+            return StrategicAI(), None
+        except Exception as exc:
+            return BasicAI(), f"StrategicAI ????????? AI?{exc}"
     if engine == "basic":
         return BasicAI(), None
     raise ValueError(f"未知 AI 引擎: {engine!r}")

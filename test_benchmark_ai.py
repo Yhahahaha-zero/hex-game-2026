@@ -97,6 +97,29 @@ class BenchmarkAITest(unittest.TestCase):
             self.assertEqual(document["games"][0]["error_message"],
                              "simulated failure")
 
+    def test_strategic_ai_can_be_loaded(self):
+        factory = benchmark.load_ai_factory("strategic")
+        ai = factory()
+        self.assertEqual(ai.name, "StrategicAI")
+        move, reason = ai.choose_move(HexBoard(), 1)
+        self.assertIsNotNone(move)
+        self.assertIsInstance(reason, str)
+
+    def test_strategic_ai_ablation_variants_can_be_loaded(self):
+        for variant, flags in {
+            "basic": (False, False, False),
+            "distance": (True, False, False),
+            "threat": (True, True, False),
+            "full": (True, True, True),
+        }.items():
+            with self.subTest(variant=variant):
+                ai = benchmark.load_ai_factory(f"strategic:{variant}")()
+                self.assertEqual(ai.name, "StrategicAI")
+                self.assertEqual(
+                    (ai.use_distance, ai.use_double_threat, ai.use_bridges),
+                    flags,
+                )
+
     def test_unknown_ai_spec_is_rejected(self):
         with self.assertRaises(ValueError):
             benchmark.load_ai_factory("unknown-ai")

@@ -36,7 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from hex_ai import create_ai
 from hex_match import play_game
 
-BUILTIN_AIS = ("basic", "random", "neural", "hybrid")
+BUILTIN_AIS = ("basic", "random", "neural", "hybrid", "strategic")
 DEFAULT_OUTPUT_DIR = str(PROJECT_ROOT.parent / "evaluation" / "benchmark_results")
 DEFAULT_GAMES = 500
 DEFAULT_SEED = 20261024
@@ -57,6 +57,26 @@ def load_ai_factory(spec):
             from ai.hybrid_ai import HybridAI
             return HybridAI()
         return hybrid_factory
+
+    if spec == "strategic" or spec.startswith("strategic:"):
+        variant = spec.split(":", 1)[1] if ":" in spec else "full"
+        variants = {
+            "basic": dict(use_distance=False, use_double_threat=False,
+                          use_bridges=False),
+            "distance": dict(use_distance=True, use_double_threat=False,
+                             use_bridges=False),
+            "threat": dict(use_distance=True, use_double_threat=True,
+                           use_bridges=False),
+            "full": dict(use_distance=True, use_double_threat=True,
+                         use_bridges=True),
+        }
+        if variant not in variants:
+            raise ValueError(f"?? StrategicAI ??: {variant!r}")
+
+        def strategic_factory():
+            from ai.strategic_ai import StrategicAI
+            return StrategicAI(**variants[variant])
+        return strategic_factory
 
     if spec == "neural" or spec.startswith("neural:"):
         model_path = None
