@@ -1,0 +1,17 @@
+{
+  "name": "HexNetV5",
+  "version": "5.0.0",
+  "encoding_version": "3x11x11-v1",
+  "model_file": "hex_model_v5_trial.pt",
+  "sha256": "59799307034e4af849c66c24536b7d22c5168adda1f69872b74ca0cafd7e1360",
+  "trained_at": "2026-10-25T08:43:13",
+  "games": 20,
+  "checkpoint_kind": "trial",
+  "seed": 20261025,
+  "temperature": 1.2,
+  "device": "cpu",
+  "pytorch_version": "2.14.1+cpu",
+  "eval_opponent": "basic",
+  "eval_games": 50,
+  "eval_win_rate": 0.08
+}

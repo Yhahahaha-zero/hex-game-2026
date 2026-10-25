@@ -24,6 +24,14 @@ python -m pip install -r requirements-ai.txt
 
 默认模型路径为 `checkpoints/hex_model_v5.pt`。当前附带的是训练 10 局的集成验证参考模型，仅用于跑通流程，不能代表最终比赛水平；正式提交前应替换为队友的完整训练权重。模型或 torch 不可用时，人机模式会自动回退基础 AI，双人模式不受影响。模型说明见 `checkpoints/README.md`。
 
+???? AI ?? `HybridAI`?Dijkstra + ? + ?? MCTS????????????
+
+```powershell
+$env:HEX_AI_ENGINE = "neural"
+```
+
+???? `hybrid`?`neural`?`basic`?
+
 
 ## 常见问题
 
@@ -101,7 +109,7 @@ check.bat
 也可单独运行以下命令：
 ```bash
 py hex_game_test.py
-py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py test_ai_worker.py test_ui.py test_p1.py test_p2.py
+py -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py test_ai.py test_mcts.py test_ai_worker.py test_ui.py test_p1.py test_p2.py test_evaluation.py test_tactics.py test_hybrid_ai.py
 ```
 
 ## AI 对比评测
@@ -148,6 +156,11 @@ python ai/train_v5.py --games 500 --seed 20261024 --output checkpoints/hex_model
 | `ai/mcts.py` | PUCT MCTS、合法动作掩码和单步时间上限 |
 | `ai/model_v5.py` | HexNetV5 网络结构和动作空间工具 |
 | `ai/train_v5.py` | 可复现 V5 自对弈训练与模型元数据保存 |
+| `ai/evaluation.py` | Dijkstra ?????????????? |
+| `ai/tactics.py` | ????????????? |
+| `ai/hybrid_ai.py` | ?????? AI |
+| `ai/ai_factory.py` | ?? AI ????????? |
+| `docs/AI_EVALUATION.md` | HybridAI ? NeuralMCTS ???? |
 | `ai/worker.py` | 后台 AI 线程、回退策略和 AIResult |
 | `ui/board_renderer.py` | 棋盘几何、棋子、坐标和胜利路径绘制 |
 | `ui/history_panel.py` | 右侧下棋记录和 AI 状态面板 |
@@ -166,6 +179,9 @@ python ai/train_v5.py --games 500 --seed 20261024 --output checkpoints/hex_model
 | `test_ui.py` | 渲染几何、窗口布局和引擎集成测试 |
 | `test_p1.py` | 模式、计时和 JSON 复盘测试 |
 | `test_p2.py` | SearchResult???????????? |
+| `test_evaluation.py` | Dijkstra ?????? |
+| `test_tactics.py` | ??????? |
+| `test_hybrid_ai.py` | HybridAI ???????? |
 | `hex_match.py` | 自动对局：胜率统计、对局记录、失败棋局复现、耗时统计 |
 | `hex_game_test.py` | 自测脚本（7 组） |
 | `hex_engine.py` | 对局引擎：回合、判胜、两局换色、比分与历史记录 |

@@ -4,6 +4,8 @@ import random
 import time
 from pathlib import Path
 
+from ai.evaluation import candidate_distance_score, shortest_path_cells
+from ai.tactics import bridge_move_bonus, creates_double_threat
 from hex_ai import BasicAI, winning_moves
 from hex_board import BLUE, RED
 
@@ -130,6 +132,20 @@ class NeuralMCTSAI:
     def _report_progress(self, progress):
         if self.progress_callback is not None:
             self.progress_callback(dict(progress))
+
+    @staticmethod
+    def _heuristic_prior_scores(board, player):
+        opponent = BLUE if player == RED else RED
+        candidates = set(shortest_path_cells(board, player))
+        candidates.update(shortest_path_cells(board, opponent))
+        candidates.update(board.legal_moves(player))
+        bridges = bridge_move_bonus(board, player)
+        return {
+            move: candidate_distance_score(board, move, player)
+            + 4.0 * bridges.get(move, 0)
+            for move in candidates
+            if board.is_empty(*move)
+        }
 
     def choose_move(self, board, player):
         if player not in (RED, BLUE):

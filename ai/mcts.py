@@ -89,10 +89,28 @@ class MCTS:
         }
         return priors, value
 
-    def expand(self, node):
+    @staticmethod
+    def apply_prior_bias(priors, heuristic_scores):
+        """将距离启发式轻度融入网络先验。"""
+        if not heuristic_scores or not priors:
+            return priors
+        values = [heuristic_scores.get(move, 0.0) for move in priors]
+        low, high = min(values), max(values)
+        if high <= low:
+            return priors
+        adjusted = {}
+        for move, prior in priors.items():
+            normalized = (heuristic_scores.get(move, 0.0) - low) / (high - low)
+            adjusted[move] = (prior ** 0.8) * math.exp(0.3 * normalized)
+        total = sum(adjusted.values())
+        if total <= 0:
+            return priors
+        return {move: value / total for move, value in adjusted.items()}
+
+    def expand(self, node, heuristic_scores=None):
         """只计算策略先验，子棋盘在真正选中时再复制。"""
         priors, value = self.evaluate(node.board, node.player)
-        node.priors = priors
+        node.priors = self.apply_prior_bias(priors, heuristic_scores)
         return value
 
     def _make_child(self, node, move, prior):
@@ -167,11 +185,11 @@ class MCTS:
         ]
         return tuple(sorted(stats, key=lambda item: (item.visits, item.prior), reverse=True))
 
-    def search_result(self, board, player, on_progress=None):
+    def search_result(self, board, player, on_progress=None, heuristic_scores=None):
         started = time.perf_counter()
         deadline = started + self.time_limit_ms / 1000.0
         root = MCTSNode(board=self.copy_board(board), player=player)
-        self.expand(root)
+        self.expand(root, heuristic_scores=heuristic_scores)
         if not root.priors:
             raise ValueError("没有合法落子")
 
@@ -213,7 +231,9 @@ class MCTS:
             root=root,
         )
 
-    def search(self, board, player, on_progress=None):
+    def search(self, board, player, on_progress=None, heuristic_scores=None):
         """???????? ``(move, visits, root)``?"""
-        result = self.search_result(board, player, on_progress=on_progress)
+        result = self.search_result(
+            board, player, on_progress=on_progress, heuristic_scores=heuristic_scores
+        )
         return result.move, result.visits, result.root

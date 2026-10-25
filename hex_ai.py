@@ -69,5 +69,13 @@ class RandomAI(HexAI):
 
 
 def create_ai(name):
-    """按名称创建 AI：basic / random。"""
-    return {"basic": BasicAI(), "random": RandomAI()}[name]
+    """????? AI?basic / random / hybrid?"""
+    key = str(name).lower()
+    if key == "basic":
+        return BasicAI()
+    if key == "random":
+        return RandomAI()
+    if key in ("hybrid", "smart"):
+        from ai.hybrid_ai import HybridAI
+        return HybridAI()
+    raise ValueError(f"?? AI ??: {name}")

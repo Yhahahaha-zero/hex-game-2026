@@ -1,9 +1,11 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """AI 契约、模型回退和只读行为测试。"""
 import tempfile
 import unittest
 from pathlib import Path
 
+from ai.ai_factory import create_competition_ai
+from ai.hybrid_ai import HybridAI
 from ai.neural_ai import (NeuralMCTSAI, choose_tactical_move,
                          create_ai_with_fallback)
 from hex_ai import BasicAI
@@ -29,6 +31,11 @@ class AIContractTest(unittest.TestCase):
         self.assertIsInstance(ai, BasicAI)
         self.assertIsNotNone(error)
         self.assertIn("模型不可用", error)
+
+    def test_competition_ai_defaults_to_hybrid(self):
+        ai, error = create_competition_ai("hybrid")
+        self.assertIsInstance(ai, HybridAI)
+        self.assertIsNone(error)
 
     def test_tactical_move_prefers_direct_win(self):
         board = HexBoard()

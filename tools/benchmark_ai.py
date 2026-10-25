@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Hex AI 对比评测工具。
 
 支持：
@@ -36,7 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from hex_ai import create_ai
 from hex_match import play_game
 
-BUILTIN_AIS = ("basic", "random", "neural")
+BUILTIN_AIS = ("basic", "random", "neural", "hybrid")
 DEFAULT_OUTPUT_DIR = "benchmark_results"
 DEFAULT_GAMES = 500
 DEFAULT_SEED = 20261024
@@ -52,10 +52,20 @@ def _safe_filename(name):
 def load_ai_factory(spec):
     """返回无参 AI 工厂。支持内置名、module:Class 和 file.py:Class。"""
     spec = str(spec).strip()
-    if spec == "neural":
+    if spec == "hybrid":
+        def hybrid_factory():
+            from ai.hybrid_ai import HybridAI
+            return HybridAI()
+        return hybrid_factory
+
+    if spec == "neural" or spec.startswith("neural:"):
+        model_path = None
+        if spec.startswith("neural:"):
+            model_path = spec.split(":", 1)[1]
+
         def neural_factory():
             from ai.neural_ai import NeuralMCTSAI
-            return NeuralMCTSAI()
+            return NeuralMCTSAI(model_path=model_path)
         return neural_factory
 
     if spec in ("basic", "random"):

@@ -38,8 +38,8 @@ def _snapshot_board(board):
 
 
 def _default_ai_loader():
-    from ai.neural_ai import create_ai_with_fallback
-    return create_ai_with_fallback()
+    from ai.ai_factory import create_competition_ai
+    return create_competition_ai()
 
 
 class AIWorker:

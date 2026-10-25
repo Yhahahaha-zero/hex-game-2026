@@ -354,24 +354,20 @@ python tools/benchmark_ai.py \
 
 ## 12. 当前项目实现
 
-- 模型入口：`ai.neural_ai.NeuralMCTSAI`；
-- 页面回退工厂：`ai.neural_ai.create_ai_with_fallback()`；
-- 默认权重：`checkpoints/hex_model_v5.pt`；
-- 默认设备：有 CUDA 时使用 CUDA，否则使用 CPU；
-- 默认单步上限：`200 ms`；
-- 默认最大模拟次数：`100`；
-- 页面通过后台线程加载和推理，不阻塞 pygame 主循环；`n- 神经 AI 可通过 `set_progress_callback()` 上报 MCTS 模拟进度；
-- torch、权重或推理失败时回退 `BasicAI`，并在界面显示回退状态；
+- 默认比赛 AI：`ai.hybrid_ai.HybridAI`；
+- 默认 AI 工厂：`ai.ai_factory.create_competition_ai()`；
+- 切换神经模型：`$env:HEX_AI_ENGINE = "neural"`；
+- 神经模型入口：`ai.neural_ai.NeuralMCTSAI`；
+- 神经后备工厂：`ai.neural_ai.create_ai_with_fallback()`；
+- 默认权重：`checkpoints/hex_model_v5.pt`（正式训练最佳 checkpoint）；
+- 默认单步预算：HybridAI 约 200 ms，NeuralMCTS 200 ms；
+- 页面通过后台线程加载和推理，不阻塞 pygame 主循环；
+- 神经 AI 可通过 `set_progress_callback()` 上报 MCTS 模拟进度；
+- MCTS 使用 `SearchResult` 返回着法、模拟次数、耗时和候选点统计；
+- torch、权重或神经推理失败时回退到 HybridAI/BasicAI；
 - 严格 benchmark 不回退，异常会写入结果；
 - 可选依赖：`requirements-ai.txt`；
-- 当前附带 `checkpoints/hex_model_v5.pt` 为训练 10 局的集成验证参考模型，正式比赛前应替换；
-- 训练入口：`python ai/train_v5.py --games 500 --seed 20261024`。
-
-### 神经 AI 评测命令
-
-```bash
-python tools/benchmark_ai.py --ai-a basic --ai-b neural --games 1000 --repeats 3 --seed 20261024
-```
+- 训练入口：`python ai/train_v5.py --games 3000 --seed 20261025`。
 
 ## 13. 验收清单
 
