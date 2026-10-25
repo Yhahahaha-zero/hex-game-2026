@@ -52,6 +52,42 @@ class UITest(unittest.TestCase):
             game.exit_replay()
             self.assertEqual(game.state, hg.S_PLAY)
 
+    def test_new_board_effects_and_colorblind_rendering(self):
+        import hex_game as hg
+        from hex_board import RED
+
+        game = hg.HexGame()
+        game.draw()
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        game.apply_move(5, 5, reason="effect-test")
+        game.hover = (4, 5)
+        game.draw()
+
+        game.colorblind = True
+        game.renderer.set_colorblind(True)
+        game.history_panel.set_palette(game.renderer.CC)
+        game.draw()
+
+        self.assertTrue(game.renderer.colorblind)
+        self.assertIsNotNone(game.renderer.static_surface)
+        self.assertIn(RED, game.renderer.CC)
+        self.assertGreater(len(game.ripples), 0)
+
+    def test_win_overlay_generates_confetti(self):
+        import hex_game as hg
+        from hex_board import RED
+
+        game = hg.HexGame()
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        for row in range(11):
+            game.apply_move(0, row)
+            if row < 10:
+                game.apply_move(10, row)
+        self.assertEqual(game.state, hg.S_WIN)
+        self.assertEqual(game.engine.winner_color, RED)
+        self.assertTrue(game.confetti)
+        game.draw()
+
     def test_hex_game_uses_engine_for_moves_and_win(self):
         import hex_game as hg
         from hex_board import RED

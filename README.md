@@ -76,10 +76,11 @@ start_game.bat --check
 - 鼠标点击空六边形落子；悬停时左下角显示坐标（先纵后横）
 - 空格：开始 / 继续 / 下一局 / 观战暂停
 - 右侧面板实时显示红蓝双方计时和最近手数
+- `C`：在普通配色与色盲友好配色之间切换
 - `Ctrl+S`：保存当前棋局为 JSON
 - `F5`：加载最近记录进入复盘；方向键切换手数，Esc 返回
-- `Ctrl+E`??? JSON?CSV?MCTS ??????????
-- `Ctrl+P`???????????
+- `Ctrl+E`：导出 JSON、CSV、MCTS 统计和截图报告
+- `Ctrl+P`：保存当前界面截图
 - Esc：退出
 - 胜负判定：红方连通上下边界、蓝方连通左右边界即胜，获胜通路以金圈高亮
 
@@ -164,6 +165,9 @@ python ai/train_v5.py --games 500 --seed 20261024 --output checkpoints/hex_model
 | `ai/worker.py` | 后台 AI 线程、回退策略和 AIResult |
 | `ui/board_renderer.py` | 棋盘几何、棋子、坐标和胜利路径绘制 |
 | `ui/history_panel.py` | 右侧下棋记录和 AI 状态面板 |
+| `ui/theme.py` | 统一配色、回弹动画与纹理辅助 |
+| `ui/screen_renderer.py` | 开始页、顶部状态栏、获胜页与本场结束页 |
+| `ui/sound.py` | 程序合成音效，无音频设备时自动静音 |
 | `game_mode.py` | 统一四种游戏模式及其人类玩家映射 |
 | `game_timer.py` | 基于单调时钟的红蓝双方计时器 |
 | `game_records.py` | JSON 保存、加载和逐步复盘 |
