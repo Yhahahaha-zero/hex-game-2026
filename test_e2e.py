@@ -117,6 +117,37 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(game.match_scores, [0, 0])
         self.assertEqual(game.engine.history, [])
 
+    def test_human_undo_button_restores_move_timer_and_turn(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        game.apply_move(5, 5, reason="first")
+        game.apply_move(5, 6, reason="second")
+        self.assertEqual(len(game.engine.game_moves()), 2)
+        self.assertEqual(len(game.timer_history), 2)
+
+        game.on_click(game.history_panel.undo_button.center)
+        self.assertEqual(len(game.engine.game_moves()), 1)
+        self.assertEqual(len(game.timer_history), 1)
+        self.assertEqual(game.engine.current_color, 2)
+        self.assertEqual(game.state, hg.S_PLAY)
+        self.assertIn("1", game.panel_message)
+
+    def test_undo_cancels_active_ai_and_undoes_human_move(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        worker = self._start_blocking_ai(game)
+        self.assertTrue(worker.cancelled is False)
+        self.assertTrue(game.undo_move())
+        self.assertTrue(worker.cancelled)
+        self.assertTrue(worker.join(1.0))
+        self.assertIsNone(game.ai_worker)
+        self.assertEqual(game.engine.game_moves(), ())
+        self.assertEqual(game.timer_history, [])
+        self.assertEqual(game.state, hg.S_PLAY)
+
     def test_reset_cancels_ai_and_new_game_can_start_another(self):
         import hex_game as hg
 

@@ -204,6 +204,108 @@ class HexEngineTest(unittest.TestCase):
         self.assertEqual(self.engine.color_of("玩家A"), RED)
         self.assertEqual(self.engine.color_of("玩家B"), BLUE)
 
+    # ==================== 悔棋测试 ====================
+
+    def test_undo_move_restores_board_and_turn(self):
+        """普通悔棋：恢复棋盘、历史记录和当前回合。"""
+        engine = self.engine
+
+        # 红方第一手
+        engine.play_move(0, 0)
+
+        # 蓝方第二手
+        engine.play_move(1, 0)
+
+        self.assertEqual(len(engine.move_history), 2)
+        self.assertEqual(engine.current_color, RED)
+
+        # 撤销蓝方第二手
+        undone = engine.undo_move()
+
+        self.assertEqual(undone, 1)
+
+        # 历史记录恢复
+        self.assertEqual(len(engine.move_history), 1)
+
+        # 第二手棋子被移除
+        self.assertEqual(engine.board.grid[0][1], 0)
+
+        # 撤销蓝方之后，应该重新轮到蓝方
+        self.assertEqual(engine.current_color, BLUE)
+
+        # 下一手应该继续使用第 2 手编号
+        engine.play_move(1, 1)
+        self.assertEqual(engine.move_history[-1]["no"], 2)
+
+    def test_undo_winning_move_restores_game_state_and_score(self):
+        """悔掉胜负手后，恢复游戏状态、比分和胜负信息。"""
+        engine = self.engine
+
+        # 红方沿第 0 列从上到下连成完整通路
+        # 同时让蓝方占据第 10 列，避免干扰红方。
+        won = False
+
+        for row in range(11):
+            self.assertEqual(engine.current_color, RED)
+
+            # 红方落子
+            won = engine.play_move(0, row)
+
+            if row < 10:
+                # 蓝方落子
+                self.assertEqual(engine.current_color, BLUE)
+                self.assertFalse(engine.play_move(10, row))
+
+        # 红方第 11 手应该获胜
+        self.assertTrue(won)
+        self.assertEqual(engine.state, STATE_GAME_OVER)
+        self.assertEqual(engine.winner_color, RED)
+        self.assertEqual(engine.winner_side, "玩家A")
+        self.assertEqual(engine.match_score["玩家A"], 1)
+
+        # 撤销最后的胜负手
+        undone = engine.undo_move()
+
+        self.assertEqual(undone, 1)
+
+        # 恢复到进行中
+        self.assertEqual(engine.state, STATE_PLAYING)
+
+        # 胜负信息清空
+        self.assertIsNone(engine.winner_color)
+        self.assertIsNone(engine.winner_side)
+        self.assertIsNone(engine.win_path)
+
+        # 比分恢复
+        self.assertEqual(engine.match_score["玩家A"], 0)
+
+        # 红方重新获得落子权
+        self.assertEqual(engine.current_color, RED)
+
+        # 最后一颗红棋被撤销
+        self.assertEqual(engine.board.grid[10][0], 0)
+
+        # 当前局应该剩下 20 手
+        self.assertEqual(len(engine.game_moves()), 20)
+
+    def test_undo_move_when_empty(self):
+        """没有棋子时悔棋应该安全返回 0。"""
+        engine = self.engine
+
+        # 开局没有棋子
+        self.assertFalse(engine.can_undo())
+        self.assertEqual(engine.undo_move(), 0)
+
+        # 下一手后可以悔棋
+        engine.play_move(0, 0)
+        self.assertTrue(engine.can_undo())
+
+        # 悔棋
+        self.assertEqual(engine.undo_move(), 1)
+
+        # 再次没有棋子
+        self.assertFalse(engine.can_undo())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

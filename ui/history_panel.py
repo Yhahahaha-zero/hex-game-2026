@@ -24,9 +24,10 @@ class HistoryPanel:
         self.body_font = None
         self.red_color = theme.RED_CLR
         self.blue_color = theme.BLUE_CLR
-        self.save_button = pygame.Rect(BOARD_W + 12, 132, 68, 32)
-        self.export_button = pygame.Rect(BOARD_W + 88, 132, 68, 32)
-        self.replay_button = pygame.Rect(BOARD_W + 164, 132, 70, 32)
+        self.undo_button = pygame.Rect(BOARD_W + 10, 132, 108, 38)
+        self.save_button = pygame.Rect(BOARD_W + 132, 132, 108, 38)
+        self.export_button = pygame.Rect(BOARD_W + 10, 176, 108, 38)
+        self.replay_button = pygame.Rect(BOARD_W + 132, 176, 108, 38)
 
     def set_fonts(self, title_font, body_font):
         self.title_font = title_font
@@ -39,7 +40,7 @@ class HistoryPanel:
 
     def draw(self, screen, moves, game_no, timers=None, ai_status="",
              replay_enabled=True, replay_mode=False, search_stats=None,
-             ai_explanation=None):
+             ai_explanation=None, undo_enabled=False):
         pygame.draw.rect(screen, PANEL_BG, (BOARD_W, 0, PANEL_W, WINDOW_H))
         pygame.draw.line(screen, PANEL_LINE, (BOARD_W, 0), (BOARD_W, WINDOW_H), 2)
 
@@ -54,16 +55,18 @@ class HistoryPanel:
         self._text(screen, f"第 {game_no}/2 局", (BOARD_W + 16, 45),
                    self.body_font, theme.DIM_CLR)
         self._draw_timers(screen, timers or {})
-        self._draw_buttons(screen, replay_enabled, replay_mode)
+        self._draw_buttons(
+            screen, replay_enabled, replay_mode, undo_enabled=undo_enabled,
+        )
 
-        self._text(screen, "手数  方  坐标  原因", (BOARD_W + 16, 178),
+        self._text(screen, "手数  方  坐标  原因", (BOARD_W + 16, 226),
                    self.body_font, theme.DIM_CLR)
-        pygame.draw.line(screen, PANEL_LINE, (BOARD_W + 12, 200),
-                         (BOARD_W + PANEL_W - 12, 200), 1)
+        pygame.draw.line(screen, PANEL_LINE, (BOARD_W + 12, 248),
+                         (BOARD_W + PANEL_W - 12, 248), 1)
 
         visible = max(1, (WINDOW_H - 500) // 24)
         rows = list(moves)[-visible:]
-        y = 208
+        y = 256
         for index, move in enumerate(rows):
             if index % 2 == 0:
                 theme.rrect(
@@ -83,7 +86,7 @@ class HistoryPanel:
             y += 24
 
         if not rows:
-            self._text(screen, "尚无落子", (BOARD_W + 16, 212),
+            self._text(screen, "尚无落子", (BOARD_W + 16, 260),
                        self.body_font, theme.DIM_CLR)
         if ai_explanation:
             self._draw_ai_explanation(screen, ai_explanation)
@@ -110,9 +113,11 @@ class HistoryPanel:
             self._text(screen, value, (rect.x + 13, rect.y + 26),
                        self.body_font, theme.TEXT_CLR)
 
-    def _draw_buttons(self, screen, replay_enabled, replay_mode):
+    def _draw_buttons(self, screen, replay_enabled, replay_mode,
+                      undo_enabled=False):
         mouse = pygame.mouse.get_pos()
         for rect, label, enabled in (
+            (self.undo_button, "悔棋", undo_enabled),
             (self.save_button, "保存", True),
             (self.export_button, "报告", True),
             (self.replay_button, "返回" if replay_mode else "复盘", replay_enabled),

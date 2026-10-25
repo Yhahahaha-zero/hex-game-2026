@@ -30,7 +30,9 @@ class DualGameTimer:
 
     def _bank_active(self, now):
         if self.active_color is not None and self.active_since is not None:
-            self.totals[self.active_color] += max(0.0, now - self.active_since)
+            self.totals[self.active_color] += max(
+                0.0, now - self.active_since
+            )
 
     def switch_to(self, color):
         now = self._clock()
@@ -69,8 +71,44 @@ class DualGameTimer:
         return total
 
     def snapshot(self):
-        return {RED: self.elapsed(RED), BLUE: self.elapsed(BLUE)}
+        return {
+            RED: self.elapsed(RED),
+            BLUE: self.elapsed(BLUE),
+        }
 
     def formatted(self):
         values = self.snapshot()
-        return {color: format_seconds(seconds) for color, seconds in values.items()}
+        return {
+            color: format_seconds(seconds)
+            for color, seconds in values.items()
+        }
+
+    # =========================
+    # 悔棋支持
+    # =========================
+
+    def savepoint(self):
+        """保存当前计时状态，供悔棋恢复。"""
+        return {
+            "totals": dict(self.totals),
+            "active_color": self.active_color,
+            "active_since": self.active_since,
+            "paused_color": self.paused_color,
+        }
+
+    def restore(self, snapshot):
+        """恢复之前保存的计时状态。"""
+        if not snapshot:
+            return
+
+        self.totals = dict(snapshot["totals"])
+        self.active_color = snapshot["active_color"]
+        self.paused_color = snapshot["paused_color"]
+
+        # active_since 是基于 monotonic() 的时间点。
+        # 恢复后重新建立当前玩家的计时起点，
+        # 避免把悔棋期间的时间也算进去。
+        if self.active_color is not None:
+            self.active_since = self._clock()
+        else:
+            self.active_since = None

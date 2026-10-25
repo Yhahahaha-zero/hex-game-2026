@@ -84,6 +84,7 @@ class HexGame:
         self.history_panel.set_palette(self.renderer.CC)
         self.overlay = OverlayRenderer(self)
         self.timer = DualGameTimer()
+        self.timer_history = []
         self.mode = None
         self.human = None
         self.ai = None
@@ -170,8 +171,19 @@ class HexGame:
     def _prune_retired_workers(self):
         self._retired_workers = [w for w in self._retired_workers if w.is_alive()]
 
+    def _cancel_ai_request(self):
+        """Cancel and invalidate the active AI request after undo."""
+        self._cancel_ai_worker()
+        self.ai_request_id += 1
+        self.pending_move = None
+        self.pending_reason = None
+        self.ai_act_at = 0
+        self.last_search_stats = ()
+        self.last_ai_explanation = None
+
     def _reset_transient_state(self):
         self._cancel_ai_worker()
+        self.timer_history = []
         self.hover = None
         self.win_at = None
         self.last_move_at = None
@@ -228,6 +240,15 @@ class HexGame:
             return f"AI{pid}"
         return "AI"
 
+    def is_human_color(self, color):
+        """判断指定颜色当前是否由人类玩家执棋。"""
+        if color not in (RED, BLUE):
+            return False
+        if self.mode == GameMode.HUMAN_VS_HUMAN:
+            return True
+        if self.mode == GameMode.AI_VS_AI:
+            return False
+        return self.player_of(color) == self.human
     def is_human_turn(self):
         if self.engine.state != STATE_PLAYING:
             return False
@@ -329,6 +350,9 @@ class HexGame:
     def _handle_panel_click(self, pos):
         if self.state == S_START:
             return False
+        if self.history_panel.undo_button.collidepoint(pos):
+            self.undo_move()
+            return True
         if self.history_panel.save_button.collidepoint(pos):
             self.save_record()
             return True
@@ -382,14 +406,60 @@ class HexGame:
             else:
                 self.timer.resume()
 
+    def undo_move(self):
+        """Undo one move, or AI+human in human-vs-AI modes."""
+        if self.state not in (S_PLAY, S_WIN, S_MATCH_END):
+            self.panel_message = "当前状态不能悔棋"
+            return False
+        if not self.engine.can_undo():
+            self.panel_message = "当前没有可以悔棋的棋步"
+            return False
+
+        self._cancel_ai_request()
+        count = 1
+        if self.mode != GameMode.HUMAN_VS_HUMAN:
+            moves = self.engine.game_moves()
+            if moves and not self.is_human_color(moves[-1]["color"]):
+                count = min(2, len(moves))
+
+        count = min(count, len(self.timer_history))
+        if count <= 0:
+            self.panel_message = "计时历史不可用，无法悔棋"
+            return False
+
+        restore_index = len(self.timer_history) - count
+        timer_snapshot = self.timer_history[restore_index]
+        undone = self.engine.undo_move(count)
+        if undone <= 0:
+            self.panel_message = "悔棋失败"
+            return False
+
+        del self.timer_history[-undone:]
+        self.timer.restore(timer_snapshot)
+        now = pygame.time.get_ticks()
+        self._sync_engine()
+        self.state = S_PLAY
+        self.win_at = None
+        self.confetti = None
+        self.last_move_at = now
+        self.ripples = []
+        self.paused = False
+        self.timer.stop()
+        self.timer.start(self.engine.current_color)
+        self.panel_message = f"已悔棋 {undone} 手"
+        self.sound.play("click")
+        return True
+
     def apply_move(self, q, r, reason=None):
         if self.engine.state != STATE_PLAYING:
             return False
         color = self.engine.current_color
+        timer_snapshot = self.timer.savepoint()
         try:
             won = self.engine.play_move(q, r, reason=reason)
         except IllegalMoveError:
             return False
+        self.timer_history.append(timer_snapshot)
         now = pygame.time.get_ticks()
         self.last_move = (q, r, color, reason)
         self.last_move_at = now
@@ -508,6 +578,8 @@ class HexGame:
                             self.exit_replay()
                         else:
                             self.quit()
+                    elif ctrl and event.key == pygame.K_z:
+                        self.undo_move()
                     elif ctrl and event.key == pygame.K_s:
                         self.save_record()
                     elif ctrl and event.key == pygame.K_e:
@@ -601,6 +673,11 @@ class HexGame:
                 replay_mode=replaying,
                 search_stats=search_stats,
                 ai_explanation=self.last_ai_explanation,
+                undo_enabled=(
+                    not replaying
+                    and self.state in (S_PLAY, S_WIN, S_MATCH_END)
+                    and self.engine.can_undo()
+                ),
             )
         self.draw_hud()
         if self.state == S_START:
