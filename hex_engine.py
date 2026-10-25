@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 对局引擎：统一负责局号、双方执色、当前回合、合法落子、判胜与获胜通路、
 两局交换红蓝、总比分、比赛结束状态和完整历史记录。
@@ -119,6 +119,16 @@ class HexEngine:
         if side == self.blue_side:
             return BLUE
         raise ValueError(f"未知队伍: {side!r}")
+
+    def sides_for_game(self, game_no=None):
+        """Return each color's team for a specific game without mutating state."""
+        target = self._game_no if game_no is None else int(game_no)
+        if target not in (1, MATCH_GAMES):
+            raise ValueError(f"非法局号: {target!r}")
+        red, blue = self._base_sides
+        if target == 2:
+            red, blue = blue, red
+        return {RED: red, BLUE: blue}
 
     def legal_moves(self, color=None):
         """返回空位；给定颜色时返回该方棋子的邻近候选点。"""
