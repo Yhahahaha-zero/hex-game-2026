@@ -4,7 +4,7 @@ import random
 import time
 from pathlib import Path
 
-from ai.evaluation import candidate_distance_score, shortest_path_cells
+from ai.evaluation import score_moves, shortest_path_cells
 from ai.tactics import bridge_move_bonus, creates_double_threat
 from hex_ai import BasicAI, winning_moves
 from hex_board import BLUE, RED
@@ -139,12 +139,13 @@ class NeuralMCTSAI:
         candidates = set(shortest_path_cells(board, player))
         candidates.update(shortest_path_cells(board, opponent))
         candidates.update(board.legal_moves(player))
+        candidates = [move for move in candidates if board.is_empty(*move)]
         bridges = bridge_move_bonus(board, player)
+        distance_scores = score_moves(board, player, candidates)
         return {
-            move: candidate_distance_score(board, move, player)
+            move: distance_scores.get(move, 0.0)
             + 4.0 * bridges.get(move, 0)
             for move in candidates
-            if board.is_empty(*move)
         }
 
     def choose_move(self, board, player):

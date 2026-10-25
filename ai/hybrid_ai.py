@@ -4,7 +4,7 @@ import math
 import random
 import time
 
-from ai.evaluation import candidate_distance_score, connection_cost, shortest_path_cells
+from ai.evaluation import connection_cost, score_moves, shortest_path_cells
 from ai.tactics import bridge_move_bonus, creates_double_threat
 from hex_ai import winning_moves
 from hex_board import BLUE, COLS, EMPTY, RED, ROWS
@@ -59,11 +59,11 @@ def _candidate_moves(board, player, limit=16):
     candidates.update(shortest_path_cells(board, player=BLUE if player == RED else RED))
     candidates.update(board.legal_moves(player))
     bridge_bonus = bridge_move_bonus(board, player)
+    candidates = [move for move in candidates if board.is_empty(*move)]
+    distance_scores = score_moves(board, player, candidates)
     scored = []
     for move in candidates:
-        if not board.is_empty(*move):
-            continue
-        score = candidate_distance_score(board, move, player)
+        score = distance_scores.get(move, 0.0)
         score += _local_score(board, move[0], move[1], player) * 1.5
         score += _center_score(*move) * 0.25
         score += bridge_bonus.get(move, 0) * 4.0
