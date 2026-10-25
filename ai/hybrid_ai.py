@@ -4,8 +4,12 @@ import math
 import random
 import time
 
-from ai.evaluation import connection_cost, score_moves, shortest_path_cells
-from ai.tactics import bridge_move_bonus, creates_double_threat
+from ai.evaluation import (clone_board, connection_cost, score_moves,
+                           shortest_path_cells)
+from ai.tactics import (block_multiple_threats, bridge_move_bonus,
+                        find_double_threat_moves,
+                        opponent_double_threat_replies, opponent_threats,
+                        shortest_path_key_weights)
 from hex_ai import winning_moves
 from hex_board import BLUE, COLS, EMPTY, RED, ROWS
 
@@ -54,22 +58,53 @@ def evaluate(board, player):
     return (opponent_distance - my_distance) * 18.0 + (own_count - opponent_count) * 0.12
 
 
-def _candidate_moves(board, player, limit=16):
+def _ranked_candidates(board, player, limit=24):
+    opponent = BLUE if player == RED else RED
     candidates = set(shortest_path_cells(board, player))
-    candidates.update(shortest_path_cells(board, player=BLUE if player == RED else RED))
+    candidates.update(shortest_path_cells(board, opponent))
     candidates.update(board.legal_moves(player))
-    bridge_bonus = bridge_move_bonus(board, player)
     candidates = [move for move in candidates if board.is_empty(*move)]
     distance_scores = score_moves(board, player, candidates)
+    bridge_bonus = bridge_move_bonus(board, player)
+    key_weights = shortest_path_key_weights(board, player)
     scored = []
     for move in candidates:
         score = distance_scores.get(move, 0.0)
         score += _local_score(board, move[0], move[1], player) * 1.5
         score += _center_score(*move) * 0.25
         score += bridge_bonus.get(move, 0) * 4.0
+        score += key_weights.get(move, 0) * 1.5
         scored.append((score, move))
-    scored.sort(reverse=True, key=lambda item: item[0])
-    return [move for _, move in scored[:limit]]
+    scored.sort(key=lambda item: (-item[0], item[1][0], item[1][1]))
+    return scored[:limit]
+
+
+def _candidate_moves(board, player, limit=24):
+    return [move for _, move in _ranked_candidates(board, player, limit)]
+
+
+def _rerank_with_threat_safety(board, player, ranked, reply_limit=16,
+                               budget_seconds=0.05):
+    """Limited two-ply check: penalize moves allowing opponent double threats."""
+    started = time.perf_counter()
+    adjusted = []
+    danger_found = False
+    for index, (base_score, move) in enumerate(ranked):
+        if time.perf_counter() - started >= budget_seconds:
+            adjusted.extend(ranked[index:])
+            break
+
+        trial = clone_board(board)
+        trial.place(move[0], move[1], player)
+        dangerous = opponent_double_threat_replies(
+            trial, player, limit=reply_limit
+        )
+        if dangerous:
+            danger_found = True
+        adjusted.append((base_score - 45.0 * len(dangerous), move))
+
+    adjusted.sort(key=lambda item: (-item[0], item[1][0], item[1][1]))
+    return adjusted, danger_found
 
 
 def _rollout_winner(board, to_move, rng):
@@ -187,10 +222,10 @@ class HybridAI:
     name = "HybridAI"
     time_limit_ms = 200
 
-    def __init__(self, time_limit=0.20, seed=None, candidate_limit=16):
+    def __init__(self, time_limit=0.20, seed=None, candidate_limit=24):
         self.time_limit = max(0.08, float(time_limit))
         self.time_limit_ms = int(self.time_limit * 1000)
-        self.candidate_limit = max(6, int(candidate_limit))
+        self.candidate_limit = max(20, int(candidate_limit))
         self.rng = random.Random(seed)
 
     def set_seed(self, seed):
@@ -205,25 +240,45 @@ class HybridAI:
 
         wins = winning_moves(board, player)
         if wins:
-            return self.rng.choice(wins), "直接获胜"
-        opponent = BLUE if player == RED else RED
-        threats = winning_moves(board, opponent)
-        if threats:
-            return self.rng.choice(threats), "紧急防守"
+            return sorted(wins)[0], "直接获胜"
 
-        candidates = _candidate_moves(board, player, self.candidate_limit)
+        threats = opponent_threats(board, player)
+        if len(threats) == 1:
+            return threats[0], "紧急防守"
+        if len(threats) >= 2:
+            move = block_multiple_threats(board, player)
+            if move is not None:
+                return move, "多威胁最佳防守"
+
+        ranked = _ranked_candidates(board, player, self.candidate_limit)
+        candidates = [move for _, move in ranked]
         if not candidates:
-            return self.rng.choice(legal), "兜底落子"
+            return sorted(legal)[0], "兜底落子"
 
-        for move in candidates[:8]:
-            if creates_double_threat(board, move, player):
+        double_moves = set(find_double_threat_moves(board, player, candidates))
+        for move in candidates:
+            if move in double_moves:
                 return move, "创造双威胁"
+
+        ranked, danger_found = _rerank_with_threat_safety(
+            board,
+            player,
+            ranked,
+            reply_limit=16,
+            budget_seconds=min(0.05, self.time_limit * 0.3),
+        )
+        candidates = [move for _, move in ranked]
 
         preview = _minimax_preview(board, player, candidates)
         if preview:
             candidates = [move for _, move in preview[:min(8, len(preview))]]
 
-        move, iterations = _mcts(board, player, candidates, self.time_limit, self.rng)
+        move, iterations = _mcts(
+            board, player, candidates, self.time_limit, self.rng
+        )
         if move is not None:
-            return move, f"Hybrid MCTS {iterations}次"
+            reason = f"Hybrid MCTS {iterations}次"
+            if danger_found:
+                reason += " · 双威胁规避"
+            return move, reason
         return candidates[0], "路径评估"

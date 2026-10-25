@@ -5,7 +5,8 @@ import time
 from pathlib import Path
 
 from ai.evaluation import score_moves, shortest_path_cells
-from ai.tactics import bridge_move_bonus, creates_double_threat
+from ai.tactics import (block_multiple_threats, bridge_move_bonus,
+                        find_double_threat_moves, opponent_threats)
 from hex_ai import BasicAI, winning_moves
 from hex_board import BLUE, RED
 
@@ -16,14 +17,18 @@ ENCODING_VERSION = "3x11x11-v1"
 
 
 def choose_tactical_move(board, player):
-    """优先返回一步获胜或一步防守着法；没有战术着法时返回 None。"""
+    """Return an immediate win or the best forced defence when available."""
     wins = winning_moves(board, player)
     if wins:
-        return random.choice(wins), "直接获胜"
-    opponent = BLUE if player == RED else RED
-    threats = winning_moves(board, opponent)
-    if threats:
-        return random.choice(threats), "紧急防守"
+        return sorted(wins)[0], "直接获胜"
+
+    threats = opponent_threats(board, player)
+    if len(threats) == 1:
+        return threats[0], "紧急防守"
+    if len(threats) >= 2:
+        move = block_multiple_threats(board, player)
+        if move is not None:
+            return move, "多威胁最佳防守"
     return None
 
 
@@ -157,11 +162,31 @@ class NeuralMCTSAI:
             self._report_progress({"phase": "tactical", "best_move": tactical[0]})
             return tactical
 
+        heuristic_scores = self._heuristic_prior_scores(board, player)
+        ordered = sorted(
+            heuristic_scores,
+            key=lambda move: (-heuristic_scores[move], move[0], move[1]),
+        )
+        double_moves = set(
+            find_double_threat_moves(board, player, ordered[:30])
+        )
+        for move in ordered[:30]:
+            if move in double_moves:
+                return move, "创造双威胁"
+
         self._report_progress({"phase": "thinking"})
-        move, _, _ = self.mcts.search(board, player, on_progress=self._report_progress)
+        move, _, _ = self.mcts.search(
+            board,
+            player,
+            on_progress=self._report_progress,
+            heuristic_scores=heuristic_scores,
+        )
         if not board.in_range(*move) or not board.is_empty(*move):
             raise RuntimeError(f"MCTS 返回非法着法: {move!r}")
-        return move, f"MCTS {self.mcts.last_simulations}次模拟/{self.mcts.last_elapsed_ms:.0f}ms"
+        return move, (
+            f"MCTS {self.mcts.last_simulations}次模拟/"
+            f"{self.mcts.last_elapsed_ms:.0f}ms"
+        )
 
 
 def create_ai_with_fallback(model_path=None, **kwargs):

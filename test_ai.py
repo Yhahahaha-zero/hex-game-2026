@@ -45,13 +45,13 @@ class AIContractTest(unittest.TestCase):
         self.assertEqual(move, (0, 10))
         self.assertEqual(reason, "直接获胜")
 
-    def test_tactical_move_blocks_immediate_threat(self):
+    def test_tactical_move_blocks_multiple_immediate_threats(self):
         board = HexBoard()
         for col in range(1, 11):
             board.place(col, 5, BLUE)
         move, reason = choose_tactical_move(board, RED)
         self.assertIn(move, {(0, 5), (0, 6)})
-        self.assertEqual(reason, "紧急防守")
+        self.assertEqual(reason, "多威胁最佳防守")
 
 
     def test_neural_ai_metadata_and_missing_model_error(self):
