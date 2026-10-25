@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """hex_match 自动对局、记录和复盘流程的回归测试。"""
 import contextlib
 import io
@@ -25,11 +25,23 @@ class HexMatchTest(unittest.TestCase):
         self.assertGreaterEqual(record["total_ms"], 0)
 
         for index, move in enumerate(record["moves"]):
-            self.assertEqual(set(move), {"p", "cell", "reason", "ms"})
+            self.assertEqual(
+                set(move),
+                {"color", "p", "cell", "reason", "ms", "timeout"},
+            )
             expected = "红" if index % 2 == 0 else "蓝"
             self.assertEqual(move["p"], expected)
             self.assertIsNotNone(parse_cell(move["cell"]))
             self.assertGreaterEqual(move["ms"], 0)
+            self.assertIn(move["color"], (RED, BLUE))
+            self.assertIsInstance(move["timeout"], bool)
+
+        self.assertEqual(
+            len(record["move_times_ms"]["red"])
+            + len(record["move_times_ms"]["blue"]),
+            record["moves_count"],
+        )
+        self.assertEqual(record["move_time_limit_ms"], 500.0)
 
     def test_same_named_ais_can_play_against_each_other(self):
         red_ai = BasicAI()

@@ -5,6 +5,16 @@ set "PYTHONUTF8=1"
 set "PYTHONDONTWRITEBYTECODE=1"
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
+if defined HEX_PYTHON if exist "%HEX_PYTHON%" (
+    set "PYTHON_EXE=%HEX_PYTHON%"
+    set "PYTHON_ARGS="
+    goto :python_found
+)
+if exist ".venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%CD%\.venv\Scripts\python.exe"
+    set "PYTHON_ARGS="
+    goto :python_found
+)
 
 for /f "delims=" %%P in ('where py 2^>nul') do (
     "%%~P" -3 -m pip --version >nul 2>nul
@@ -52,7 +62,7 @@ echo [1/2] Running game self-test...
 if errorlevel 1 goto :fail
 
 echo [2/2] Running unit tests...
-"%PYTHON_EXE%" %PYTHON_ARGS% -B -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_benchmark_ai.py
+"%PYTHON_EXE%" %PYTHON_ARGS% -B -m unittest -v test_hex_board.py test_hex_engine.py test_hex_match.py test_hex_notation.py test_game_records_validation.py test_benchmark_ai.py test_ai.py test_mcts.py test_ai_worker.py test_ui.py test_p1.py test_p2.py test_evaluation.py test_tactics.py test_hybrid_ai.py test_strategic_ai.py test_tournament.py test_package_release.py test_e2e.py
 if errorlevel 1 goto :fail
 
 echo [OK] All checks passed.

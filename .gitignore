@@ -8,3 +8,5 @@ build/
 dist/
 *.spec
 benchmark_results/
+records/*.json
+reports/*/

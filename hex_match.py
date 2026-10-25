@@ -22,14 +22,14 @@ import sys
 import time
 from datetime import datetime
 
-from hex_board import RED, BLUE, COLOR_NAMES, parse_cell
+from hex_board import RED, BLUE, COLOR_NAMES, IllegalMoveError, parse_cell
 from hex_ai import create_ai
 from hex_engine import HexEngine, STATE_PLAYING, STATE_GAME_OVER
 
 RECORDS_FILE = "hex_records.json"
 
 
-def play_game(red_ai, blue_ai):
+def play_game(red_ai, blue_ai, move_time_limit_ms=500):
     """AI 对 AI 一局，返回对局记录 dict（含每手坐标、原因、耗时）。
 
     所有落子、换手和判胜均通过 HexEngine，本函数不直接修改棋盘。
@@ -43,17 +43,25 @@ def play_game(red_ai, blue_ai):
         started = time.perf_counter()
         (q, r), reason = ai.choose_move(game.board, color)
         elapsed_ms = (time.perf_counter() - started) * 1000
-        game.play_move(q, r, ms=elapsed_ms, reason=reason)
+        try:
+            game.play_move(q, r, ms=elapsed_ms, reason=reason)
+        except IllegalMoveError as exc:
+            raise IllegalMoveError(
+                f"{getattr(ai, 'name', type(ai).__name__)} ?????? "
+                f"{(q, r)!r}: {exc}"
+            ) from exc
 
     if game.winner_color not in (RED, BLUE):
         raise RuntimeError("对局结束但没有产生胜方")
 
     moves = [
         {
+            "color": move["color"],
             "p": COLOR_NAMES[move["color"]],
             "cell": move["cell"],
             "reason": move["reason"],
             "ms": move["ms"],
+            "timeout": move["ms"] > float(move_time_limit_ms),
         }
         for move in game.move_history
     ]
@@ -62,6 +70,12 @@ def play_game(red_ai, blue_ai):
         "moves": moves,
         "moves_count": len(moves),
         "total_ms": round((time.perf_counter() - t0) * 1000, 1),
+        "move_time_limit_ms": float(move_time_limit_ms),
+        "move_times_ms": {
+            "red": [move["ms"] for move in moves if move["color"] == RED],
+            "blue": [move["ms"] for move in moves if move["color"] == BLUE],
+        },
+        "timeout_count": sum(1 for move in moves if move["timeout"]),
     }
 
 

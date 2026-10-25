@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 对局引擎：统一负责局号、双方执色、当前回合、合法落子、判胜与获胜通路、
 两局交换红蓝、总比分、比赛结束状态和完整历史记录。
@@ -120,6 +120,16 @@ class HexEngine:
             return BLUE
         raise ValueError(f"未知队伍: {side!r}")
 
+    def sides_for_game(self, game_no=None):
+        """Return each color's team for a specific game without mutating state."""
+        target = self._game_no if game_no is None else int(game_no)
+        if target not in (1, MATCH_GAMES):
+            raise ValueError(f"非法局号: {target!r}")
+        red, blue = self._base_sides
+        if target == 2:
+            red, blue = blue, red
+        return {RED: red, BLUE: blue}
+
     def legal_moves(self, color=None):
         """返回空位；给定颜色时返回该方棋子的邻近候选点。"""
         return self._board.legal_moves(color)
@@ -227,3 +237,57 @@ class HexEngine:
         """返回指定局（默认当前局）的手数记录快照。"""
         target = self._game_no if game_no is None else game_no
         return tuple(dict(item) for item in self.history if item["game"] == target)
+
+    def can_undo(self):
+        """当前局是否存在可以悔棋的落子。"""
+        return bool(self.game_moves())
+
+    def undo_move(self, count=1):
+        """悔棋最近 count 手，并同步恢复引擎状态。"""
+        if count < 1:
+            raise ValueError("悔棋手数必须 >= 1")
+
+        current_moves = [
+            move for move in self.history
+            if move["game"] == self._game_no
+        ]
+
+        if not current_moves:
+            return 0
+
+        actual_count = min(int(count), len(current_moves))
+
+        for _ in range(actual_count):
+            # 当前最后一手
+            move = self.history[-1]
+
+            # 从棋盘撤销
+            if not self._board.undo():
+                break
+
+            # 从引擎历史撤销
+            self.history.pop()
+
+            # 如果撤销的是胜负手，需要恢复比分和结果
+            if self._state in (STATE_GAME_OVER, STATE_MATCH_OVER):
+                if self._winner_side is not None:
+                    if self.scores[self._winner_side] > 0:
+                        self.scores[self._winner_side] -= 1
+
+                if self.results and self.results[-1]["game"] == self._game_no:
+                    self.results.pop()
+
+            # 恢复到进行中
+            self._state = STATE_PLAYING
+            self._winner_color = None
+            self._winner_side = None
+            self._win_path = None
+            self._end_reason = None
+
+            # 撤销谁的棋，就轮到谁重新下
+            self._turn = move["color"]
+
+            # 下一手仍然使用被撤销的手数编号
+            self._move_no = move["no"]
+
+        return actual_count
