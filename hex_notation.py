@@ -401,7 +401,7 @@ def notation_to_match_record(notation, verify_result=True):
     """Convert notation into the existing JSON record schema for replay."""
     engine = notation_to_engine(notation, verify_result=verify_result)
     from game_mode import GameMode
-    from game_records import build_match_record
+    from game_records import build_match_record, refresh_record_integrity
 
     labels = {
         notation.metadata.red_team: notation.metadata.red_team,
@@ -414,4 +414,4 @@ def notation_to_match_record(notation, verify_result=True):
         "event_name": notation.metadata.event_name,
         "result": notation.metadata.result,
     }
-    return document
+    return refresh_record_integrity(document)

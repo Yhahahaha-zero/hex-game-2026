@@ -88,6 +88,18 @@ class UITest(unittest.TestCase):
         self.assertTrue(game.confetti)
         game.draw()
 
+    def test_invalid_record_sets_record_error_message(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "broken.json"
+            path.write_text('{"schema_version": 2, "games": [', encoding="utf-8")
+            with patch("hex_game.latest_record", return_value=path):
+                game.start_replay()
+        self.assertNotEqual(game.state, hg.S_REPLAY)
+        self.assertTrue(game.panel_message.startswith("记录异常"))
+
     def test_hex_game_uses_engine_for_moves_and_win(self):
         import hex_game as hg
         from hex_board import RED

@@ -6,8 +6,8 @@ import pygame
 
 from ai.worker import AIWorker
 from game_mode import GameMode
-from game_records import (ReplaySession, latest_record, load_record,
-                          save_match_record)
+from game_records import (RecordValidationError, ReplaySession,
+                          latest_record, load_record, save_match_record)
 from game_timer import DualGameTimer
 from report_export import capture_screen, export_report_bundle
 from hex_board import BLUE, IllegalMoveError, RED, cell_name
@@ -252,8 +252,10 @@ class HexGame:
             self.replay_return_state = self.state
             self.timer.pause()
             self.state = S_REPLAY
-            self.panel_message = ""
+            self.panel_message = self.replay.record_status
             self.last_record_path = path
+        except RecordValidationError as exc:
+            self.panel_message = f"记录异常：{exc}"
         except Exception as exc:
             self.panel_message = f"复盘失败：{exc}"
 
@@ -577,7 +579,8 @@ class HexGame:
         if self.state == S_REPLAY and self.replay is not None:
             return (
                 f"复盘 {self.replay.step}/{self.replay.total_moves}\n"
-                "← → 切换\nEsc 返回"
+                f"{self.replay.record_status} / {self.replay.game_no} 局\n"
+                "← → 切换 / Esc 返回"
             )
         progress = self._ai_progress_text()
         parts = [part for part in (self.ai_status_message, progress, self.panel_message) if part]

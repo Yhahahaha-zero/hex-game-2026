@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """GameMode、双计时器和 JSON 记录复盘测试。"""
 import json
 import tempfile
@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from game_mode import GameMode
-from game_records import ReplaySession, build_match_record, load_record, save_match_record
+from game_records import (SCHEMA_VERSION, ReplaySession, build_match_record,
+                          load_record, save_match_record)
 from game_timer import DualGameTimer, format_seconds
 from hex_board import BLUE, RED
 from hex_engine import HexEngine
@@ -51,7 +52,9 @@ class P1Test(unittest.TestCase):
         engine.play_move(6, 6, reason="second")
         document = build_match_record(engine, GameMode.HUMAN_VS_HUMAN,
                                       {"玩家1": "玩家1", "玩家2": "玩家2"})
-        self.assertEqual(document["schema_version"], 1)
+        self.assertEqual(document["schema_version"], SCHEMA_VERSION)
+        self.assertTrue(document["record_id"])
+        self.assertEqual(len(document["record_sha256"]), 64)
         self.assertEqual(len(document["games"][0]["moves"]), 2)
 
         with tempfile.TemporaryDirectory() as temp_dir:
