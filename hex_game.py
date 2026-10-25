@@ -92,6 +92,7 @@ class HexGame:
         self.ai_worker = None
         self._retired_workers = []
         self.last_search_stats = ()
+        self.last_ai_explanation = None
         self.mode_buttons = []
         self.panel_message = ""
         self.replay = None
@@ -183,6 +184,7 @@ class HexGame:
         self.ai_request_id += 1
         self.ai_worker = None
         self.last_search_stats = ()
+        self.last_ai_explanation = None
 
     def reset_match(self, show_intro=False):
         self.engine = HexEngine("玩家1", "玩家2")
@@ -420,6 +422,7 @@ class HexGame:
         if result.ai is not None:
             self.ai = result.ai
         self.last_search_stats = tuple(result.search_stats or ())
+        self.last_ai_explanation = result.explanation
         if result.init_error:
             print(f"[AI] {result.init_error}")
             self.ai_status_message = "模型不可用，已回退基础 AI"
@@ -597,6 +600,7 @@ class HexGame:
                 ai_status=status,
                 replay_mode=replaying,
                 search_stats=search_stats,
+                ai_explanation=self.last_ai_explanation,
             )
         self.draw_hud()
         if self.state == S_START:

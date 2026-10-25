@@ -174,6 +174,20 @@ def _rate(wins, games):
     return round(wins / games * 100, 2) if games else 0.0
 
 
+def _percentile(values, percentile):
+    if not values:
+        return 0.0
+    ordered = sorted(float(value) for value in values)
+    if len(ordered) == 1:
+        return round(ordered[0], 3)
+    position = (len(ordered) - 1) * percentile
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    weight = position - lower
+    value = ordered[lower] * (1 - weight) + ordered[upper] * weight
+    return round(value, 3)
+
+
 def summarize_games(games, ai_a_spec, ai_b_spec):
     """根据逐局结果计算报告统计。games 中可包含异常局。"""
     completed = [game for game in games if game["status"] == "completed"]
@@ -196,6 +210,15 @@ def summarize_games(games, ai_a_spec, ai_b_spec):
     b_move_count = sum(game["b_move_count"] for game in completed)
     a_max = max((game["a_max_move_ms"] for game in completed), default=0.0)
     b_max = max((game["b_max_move_ms"] for game in completed), default=0.0)
+    a_times = [ms for game in completed for ms in game.get("a_move_times_ms", ())]
+    b_times = [ms for game in completed for ms in game.get("b_move_times_ms", ())]
+    a_timeout_count = sum(game.get("a_timeout_count", 0) for game in completed)
+    b_timeout_count = sum(game.get("b_timeout_count", 0) for game in completed)
+    total_move_count = a_move_count + b_move_count
+    illegal_move_games = sum(
+        1 for game in errors if game.get("error_type") == "IllegalMoveError"
+    )
+    draws = sum(1 for game in completed if game.get("winner_ai") not in ("A", "B"))
     ci_low, ci_high = _wilson_interval(a_wins, completed_count)
 
     return {
@@ -224,8 +247,21 @@ def summarize_games(games, ai_a_spec, ai_b_spec):
         "average_game_ms": round(_mean([game["total_ms"] for game in completed]), 2),
         "ai_a_average_move_ms": round(a_move_time / a_move_count, 3) if a_move_count else 0.0,
         "ai_a_max_move_ms": round(a_max, 3),
+        "ai_a_p50_move_ms": _percentile(a_times, 0.50),
+        "ai_a_p95_move_ms": _percentile(a_times, 0.95),
+        "ai_a_p99_move_ms": _percentile(a_times, 0.99),
+        "ai_a_timeout_count": a_timeout_count,
         "ai_b_average_move_ms": round(b_move_time / b_move_count, 3) if b_move_count else 0.0,
         "ai_b_max_move_ms": round(b_max, 3),
+        "ai_b_p50_move_ms": _percentile(b_times, 0.50),
+        "ai_b_p95_move_ms": _percentile(b_times, 0.95),
+        "ai_b_p99_move_ms": _percentile(b_times, 0.99),
+        "ai_b_timeout_count": b_timeout_count,
+        "move_timeout_count": a_timeout_count + b_timeout_count,
+        "move_timeout_rate": _rate(a_timeout_count + b_timeout_count, total_move_count),
+        "illegal_move_games": illegal_move_games,
+        "illegal_move_rate": _rate(illegal_move_games, len(games)),
+        "draws": draws,
         "error_types": dict(Counter(game["error_type"] for game in errors)),
     }
 
@@ -255,6 +291,13 @@ def _game_row(repeat, game_index, pair_index, orientation, seed,
         "b_move_count": 0,
         "a_max_move_ms": 0.0,
         "b_max_move_ms": 0.0,
+        "a_move_times_ms": [],
+        "b_move_times_ms": [],
+        "a_timeout_count": 0,
+        "b_timeout_count": 0,
+        "timeout_count": 0,
+        "move_time_limit_ms": record.get("move_time_limit_ms", 500)
+        if record else 500,
     }
     if error:
         return row
@@ -276,11 +319,18 @@ def _game_row(repeat, game_index, pair_index, orientation, seed,
         row[f"{owner}_move_ms_sum"] += move["ms"]
         row[f"{owner}_max_move_ms"] = max(
             row[f"{owner}_max_move_ms"], move["ms"])
+        row[f"{owner}_move_times_ms"].append(move["ms"])
+        if move.get("timeout"):
+            row[f"{owner}_timeout_count"] += 1
+            row["timeout_count"] += 1
+    row["a_move_ms_sum"] = round(row["a_move_ms_sum"], 3)
+    row["b_move_ms_sum"] = round(row["b_move_ms_sum"], 3)
     return row
 
 
 def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
-                  output_dir=DEFAULT_OUTPUT_DIR, name=None, quiet=False):
+                  output_dir=DEFAULT_OUTPUT_DIR, name=None, quiet=False,
+                  move_time_limit_ms=500):
     """运行 AB/BA 配对评测并写入 JSON、汇总 CSV 和逐局 CSV。"""
     if games <= 0 or games % 2:
         raise ValueError("games 必须是大于 0 的偶数")
@@ -327,7 +377,10 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
                 seed_ai(blue_ai, pair_seed)
                 started = time.perf_counter()
                 try:
-                    record = play_game(red_ai, blue_ai)
+                    record = play_game(
+                        red_ai, blue_ai,
+                        move_time_limit_ms=move_time_limit_ms,
+                    )
                     error = None
                 except Exception as exc:
                     record = None
@@ -365,6 +418,7 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
             "games_per_repeat": games,
             "repeats": repeats,
             "base_seed": seed,
+            "move_time_limit_ms": float(move_time_limit_ms),
             "pairing": "AB/BA with colors swapped",
             "total_games": games * repeats,
             "ai_a_metadata": metadata_a,
@@ -446,13 +500,18 @@ def _print_summary(summary):
           f"({summary['ai_a_blue_wins']}/{summary['ai_a_blue_games']})")
     print(f"红方胜率：{summary['red_win_rate']:.2f}%")
     print(f"平均手数：{summary['average_moves']:.2f}")
-    print(f"AI A 平均加载耗时：{summary['ai_a_average_load_ms']:.3f} ms")
-    print(f"AI A 平均/最大耗时：{summary['ai_a_average_move_ms']:.3f} / "
+    print(f"AI A \u5e73\u5747/P95/P99/\u6700\u5927\u8017\u65f6\uff1a"
+          f"{summary['ai_a_average_move_ms']:.3f} / "
+          f"{summary['ai_a_p95_move_ms']:.3f} / "
+          f"{summary['ai_a_p99_move_ms']:.3f} / "
           f"{summary['ai_a_max_move_ms']:.3f} ms")
-    print(f"AI B 平均加载耗时：{summary['ai_b_average_load_ms']:.3f} ms")
-    print(f"AI B 平均/最大耗时：{summary['ai_b_average_move_ms']:.3f} / "
+    print(f"AI B \u5e73\u5747/P95/P99/\u6700\u5927\u8017\u65f6\uff1a"
+          f"{summary['ai_b_average_move_ms']:.3f} / "
+          f"{summary['ai_b_p95_move_ms']:.3f} / "
+          f"{summary['ai_b_p99_move_ms']:.3f} / "
           f"{summary['ai_b_max_move_ms']:.3f} ms")
-
+    print(f"\u8d85\u65f6\u7740\u6cd5\uff1a{summary['move_timeout_count']} "
+          f"({summary['move_timeout_rate']:.2f}%)")
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
@@ -468,6 +527,8 @@ def main(argv=None):
                         help="重复实验轮数")
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED,
                         help="基础随机种子")
+    parser.add_argument("--move-time-limit-ms", type=float, default=500,
+                        help="\u7edf\u8ba1\u5355\u6b65\u8d85\u65f6\u7684\u6beb\u79d2\u4e0a\u9650")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR,
                         help="CSV/JSON 输出目录")
     parser.add_argument("--name", default=None,
@@ -478,7 +539,8 @@ def main(argv=None):
     try:
         document, paths = run_benchmark(
             args.ai_a, args.ai_b, args.games, args.repeats,
-            args.seed, args.output_dir, args.name, args.quiet)
+            args.seed, args.output_dir, args.name, args.quiet,
+            args.move_time_limit_ms)
     except (ValueError, TypeError, FileNotFoundError, ImportError) as exc:
         print(f"[ERROR] {exc}")
         return 2

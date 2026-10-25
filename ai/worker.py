@@ -1,9 +1,11 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """页面层使用的可取消后台 AI 任务和不可变结果对象。"""
 from dataclasses import dataclass
 import threading
+import time
 from typing import Any, Optional
 
+from ai.explanation import normalize_explanation
 from hex_board import BLUE, HexBoard, RED
 
 
@@ -20,6 +22,7 @@ class AIResult:
     inference_error: Optional[str] = None
     fallback_error: Optional[str] = None
     search_stats: tuple = ()
+    explanation: Optional[dict] = None
     cancelled: bool = False
 
     @property
@@ -165,6 +168,7 @@ class AIWorker:
 
         move = None
         reason = ""
+        started = time.perf_counter()
         try:
             move, reason = selected_ai.choose_move(self.board, self.color)
             if self._cancel_event.is_set():
@@ -211,6 +215,15 @@ class AIWorker:
             best_move=move,
         )
         progress = self.progress
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+        explanation = normalize_explanation(
+            getattr(selected_ai, "last_explanation", None),
+            move=move,
+            reason=reason,
+            elapsed_ms=elapsed_ms,
+        )
+        explanation_stats = tuple(explanation.get("candidates", ()))
+        progress_stats = tuple(progress.get("candidates", ()))
         self._result = AIResult(
             request_id=self.request_id,
             color=self.color,
@@ -220,7 +233,8 @@ class AIWorker:
             init_error=init_error,
             inference_error=inference_error,
             fallback_error=fallback_error,
-            search_stats=tuple(progress.get("candidates", ())),
+            search_stats=progress_stats or explanation_stats,
+            explanation=explanation,
         )
 
     def _legal_move(self, move):

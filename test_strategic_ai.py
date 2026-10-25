@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """StrategicAI 的确定性战术、桥关键点和消融开关测试。"""
 import unittest
 
@@ -27,6 +27,24 @@ class StrategicAITest(unittest.TestCase):
     def test_center_opening(self):
         move, _ = StrategicAI().choose_move(HexBoard(), RED)
         self.assertEqual(move, (5, 5))
+
+    def test_strategic_ai_exposes_ranked_explanation(self):
+        ai = StrategicAI()
+        move, reason = ai.choose_move(HexBoard(), RED)
+        explanation = ai.last_explanation.as_dict()
+        self.assertEqual(explanation["selected_move"], move)
+        self.assertEqual(explanation["tactic"], reason)
+        self.assertEqual(explanation["score_type"], "??????")
+        self.assertTrue(explanation["candidates"])
+
+    def test_strategic_ai_exposes_ranked_explanation(self):
+        ai = StrategicAI()
+        move, reason = ai.choose_move(HexBoard(), RED)
+        explanation = ai.last_explanation.as_dict()
+        self.assertEqual(explanation["selected_move"], move)
+        self.assertEqual(explanation["tactic"], reason)
+        self.assertEqual(explanation["score_type"], "启发式综合分")
+        self.assertTrue(explanation["candidates"])
 
     def test_immediate_win(self):
         board = HexBoard()

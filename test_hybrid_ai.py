@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """HybridAI 战术顺序、合法性和只读行为测试。"""
 import unittest
 
@@ -19,6 +19,27 @@ class HybridAITest(unittest.TestCase):
         move, reason = HybridAI(time_limit=0.08, seed=1).choose_move(HexBoard(), RED)
         self.assertEqual(move, (5, 5))
         self.assertEqual(reason, "中心开局")
+
+    def test_hybrid_ai_exposes_monte_carlo_explanation(self):
+        board = HexBoard()
+        board.place(5, 5, RED)
+        ai = HybridAI(time_limit=0.08, seed=4)
+        move, reason = ai.choose_move(board, 2)
+        explanation = ai.last_explanation.as_dict()
+        self.assertEqual(explanation["selected_move"], move)
+        self.assertEqual(explanation["tactic"], reason)
+        self.assertIn(explanation["score_type"], ("??????", "??????"))
+
+    def test_hybrid_ai_exposes_monte_carlo_explanation(self):
+        board = HexBoard()
+        board.place(5, 5, RED)
+        ai = HybridAI(time_limit=0.08, seed=4)
+        move, reason = ai.choose_move(board, 2)
+        explanation = ai.last_explanation.as_dict()
+        self.assertEqual(explanation["selected_move"], move)
+        self.assertEqual(explanation["tactic"], reason)
+        self.assertIn(explanation["score_type"],
+                      ("蒙特卡洛胜率", "启发式综合分"))
 
     def test_immediate_win(self):
         board = HexBoard()

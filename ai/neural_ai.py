@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 from ai.evaluation import score_moves, shortest_path_cells
+from ai.explanation import AIExplanation
 from ai.tactics import (block_multiple_threats, boundary_bridge_bonus,
                         bridge_score_map, find_double_threat_moves,
                         opponent_threats)
@@ -65,6 +66,7 @@ class NeuralMCTSAI:
         self.load_ms = 0.0
         self.progress_callback = None
         self._cancel_event = None
+        self.last_explanation = None
 
         started = time.perf_counter()
         self.model = HexNetV5().to(self.device)
@@ -159,13 +161,51 @@ class NeuralMCTSAI:
             for move in candidates
         }
 
+    def _publish_explanation(self, move, tactic, started, heuristic_scores=None,
+                             children=None, metadata=None):
+        if children:
+            candidate_rows = tuple({
+                "move": child.move,
+                "visits": child.visits,
+                "prior": round(child.prior, 6),
+                "value": round(child.value, 6),
+                "score": child.visits,
+                "reason": tactic,
+            } for child in children[:5])
+            score_type = "访问次数 visits"
+        elif heuristic_scores:
+            ordered = sorted(
+                heuristic_scores,
+                key=lambda cell: (-heuristic_scores[cell], cell[0], cell[1]),
+            )
+            candidate_rows = tuple({
+                "move": cell,
+                "score": round(float(heuristic_scores[cell]), 4),
+                "reason": tactic,
+            } for cell in ordered[:5])
+            score_type = "距离/桥启发式分"
+        else:
+            candidate_rows = ({"move": move, "score": None, "reason": tactic},)
+            score_type = "战术优先级"
+        self.last_explanation = AIExplanation(
+            selected_move=move,
+            tactic=tactic,
+            candidates=candidate_rows,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+            search_type="puct-mcts",
+            score_type=score_type,
+            metadata=dict(metadata or {}),
+        )
+
     def choose_move(self, board, player):
+        started = time.perf_counter()
         if player not in (RED, BLUE):
             raise ValueError(f"非法颜色编号: {player!r}")
 
         tactical = choose_tactical_move(board, player)
         if tactical is not None:
             self._report_progress({"phase": "tactical", "best_move": tactical[0]})
+            self._publish_explanation(tactical[0], tactical[1], started)
             return tactical
 
         heuristic_scores = self._heuristic_prior_scores(board, player)
@@ -178,22 +218,36 @@ class NeuralMCTSAI:
         )
         for move in ordered[:30]:
             if move in double_moves:
-                return move, "创造双威胁"
+                tactic = "创造双威胁"
+                self._publish_explanation(
+                    move, tactic, started, heuristic_scores=heuristic_scores
+                )
+                return move, tactic
 
         self._report_progress({"phase": "thinking"})
-        move, _, _ = self.mcts.search(
+        result = self.mcts.search_result(
             board,
             player,
             on_progress=self._report_progress,
             heuristic_scores=heuristic_scores,
             cancel_event=self._cancel_event,
         )
+        move = result.move
         if not board.in_range(*move) or not board.is_empty(*move):
             raise RuntimeError(f"MCTS 返回非法着法: {move!r}")
-        return move, (
+        reason = (
             f"MCTS {self.mcts.last_simulations}次模拟/"
             f"{self.mcts.last_elapsed_ms:.0f}ms"
         )
+        self._publish_explanation(
+            move,
+            reason,
+            started,
+            heuristic_scores=heuristic_scores,
+            children=result.children,
+            metadata={"simulations": result.simulations},
+        )
+        return move, reason
 
 
 def create_ai_with_fallback(model_path=None, **kwargs):

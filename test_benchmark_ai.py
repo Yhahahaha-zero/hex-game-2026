@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hex_ai import BasicAI
-from hex_board import HexBoard
+from hex_board import HexBoard, IllegalMoveError
 from tools import benchmark_ai as benchmark
 
 
@@ -68,6 +68,14 @@ class BenchmarkAITest(unittest.TestCase):
             self.assertEqual(len(game_rows), 8)
             self.assertIn("a_move_count", game_rows[0])
             self.assertIn("b_move_count", game_rows[0])
+            self.assertIn("a_move_times_ms", game_rows[0])
+            self.assertIn("a_timeout_count", game_rows[0])
+            for key in (
+                "ai_a_p50_move_ms", "ai_a_p95_move_ms", "ai_a_p99_move_ms",
+                "ai_b_p50_move_ms", "ai_b_p95_move_ms", "ai_b_p99_move_ms",
+                "move_timeout_rate", "illegal_move_rate", "draws",
+            ):
+                self.assertIn(key, document["summary"])
 
     def test_odd_game_count_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -96,6 +104,21 @@ class BenchmarkAITest(unittest.TestCase):
             self.assertEqual(document["games"][0]["status"], "error")
             self.assertEqual(document["games"][0]["error_message"],
                              "simulated failure")
+
+    def test_percentile_and_illegal_move_rate(self):
+        self.assertEqual(benchmark._percentile([1, 2, 3, 4], 0.50), 2.5)
+        self.assertEqual(benchmark._percentile([1, 2, 3, 4], 0.95), 3.85)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(
+                benchmark, "play_game",
+                side_effect=IllegalMoveError("illegal"),
+            ):
+                document, _ = benchmark.run_benchmark(
+                    "basic", "random", games=2, repeats=1, seed=7,
+                    output_dir=Path(temp_dir), name="illegal", quiet=True,
+                )
+        self.assertEqual(document["summary"]["illegal_move_games"], 2)
+        self.assertEqual(document["summary"]["illegal_move_rate"], 100.0)
 
     def test_strategic_ai_can_be_loaded(self):
         factory = benchmark.load_ai_factory("strategic")

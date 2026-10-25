@@ -32,6 +32,16 @@ class AIContractTest(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertIn("模型不可用", error)
 
+    def test_basic_ai_exposes_explanation(self):
+        board = HexBoard()
+        ai = BasicAI()
+        move, reason = ai.choose_move(board, RED)
+        explanation = ai.last_explanation.as_dict()
+        self.assertEqual(explanation["selected_move"], move)
+        self.assertEqual(explanation["tactic"], reason)
+        self.assertTrue(explanation["candidates"])
+        self.assertEqual(explanation["search_type"], "rule")
+
     def test_competition_ai_defaults_to_hybrid(self):
         ai, error = create_competition_ai("hybrid")
         self.assertIsInstance(ai, HybridAI)

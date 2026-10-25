@@ -1,25 +1,21 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 海克斯棋 AI。
 
-当前实现（基础 AI），按优先级：
-  1. 发现直接获胜机会：己方存在一步连通两边界的着法 → 立即取胜；
-  2. 识别紧急防守机会：对手存在一步取胜的着法 → 抢占该点（优先选同时
-     能帮己方连通的点；对手同时有多个取胜点时只能封住其一，此时基本败局已定）；
-  3. 兜底：在合法位置中按“靠近棋盘中心优先”的权重随机选择。
-
-扩展点（后续路径评估）：把第 3 步换成对每个候选点做“双端距离评估”，例如
-用 Dijkstra 分别计算红方距上下边界的距离和、蓝方距左右边界的距离和，
-再结合桥型（bridge）结构识别，即把 evaluate(board, q, r, player) 的得分
-接入 choose_move 的兜底分支即可。
+基础 AI 决策顺序：
+  1. 直接获胜；
+  2. 紧急防守；
+  3. 靠近棋盘中心的加权随机落子。
 """
 import random
+import time
 
+from ai.explanation import AIExplanation
 from hex_board import EMPTY, RED, BLUE, HexBoard
 
 
 def winning_moves(board, player):
-    """返回 player 一步取胜的全部空位（虚拟落子 + 并查集判定，每点 O(邻居数)）。"""
+    """返回 player 一步取胜的全部空位。"""
     return [(q, r) for (q, r) in board.legal_moves(player)
             if board.would_win(q, r, player)]
 
@@ -28,6 +24,7 @@ class HexAI:
     """AI 基类：choose_move 返回 ((q, r), 原因说明)。"""
 
     name = "AI"
+    last_explanation = None
 
     def choose_move(self, board, player):
         raise NotImplementedError
@@ -39,22 +36,38 @@ class BasicAI(HexAI):
     name = "基础AI"
 
     def choose_move(self, board, player):
-        opp = 3 - player
+        started = time.perf_counter()
+        opponent = 3 - player
         wins = winning_moves(board, player)
         if wins:
-            return random.choice(wins), "直接获胜"
-        threats = winning_moves(board, opp)
+            move = random.choice(wins)
+            return self._finish(move, "直接获胜", wins, started)
+        threats = winning_moves(board, opponent)
         if threats:
-            # 优先占既堵对手又能帮己方的点
             mine = set(board.legal_moves(player))
-            dual = [t for t in threats if t in mine]
-            return random.choice(dual or threats), "紧急防守"
-        return self._center_random(board, player), "常规落子"
+            dual = [cell for cell in threats if cell in mine]
+            move = random.choice(dual or threats)
+            return self._finish(move, "紧急防守", threats, started)
+        move = self._center_random(board, player)
+        return self._finish(move, "常规落子", [move], started)
+
+    def _finish(self, move, reason, candidates, started):
+        self.last_explanation = AIExplanation(
+            selected_move=move,
+            tactic=reason,
+            candidates=tuple(
+                {"move": cell, "reason": reason, "score": None}
+                for cell in candidates[:5]
+            ),
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+            search_type="rule",
+            score_type="规则优先级",
+        )
+        return move, reason
 
     @staticmethod
     def _center_random(board, player):
         moves = board.legal_moves(player) or board.legal_moves()
-        # 距中心曼哈顿距离越近权重越高
         weights = [max(1, 12 - (abs(q - 5) + abs(r - 5))) for q, r in moves]
         return random.choices(moves, weights=weights, k=1)[0]
 
@@ -65,11 +78,21 @@ class RandomAI(HexAI):
     name = "随机AI"
 
     def choose_move(self, board, player):
-        return random.choice(board.legal_moves()), "随机"
+        started = time.perf_counter()
+        move = random.choice(board.legal_moves())
+        self.last_explanation = AIExplanation(
+            selected_move=move,
+            tactic="随机",
+            candidates=({"move": move, "reason": "随机", "score": None},),
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+            search_type="random",
+            score_type="无评分",
+        )
+        return move, "随机"
 
 
 def create_ai(name):
-    """????? AI?basic / random / hybrid?"""
+    """创建基础 AI：basic / random / hybrid / strategic。"""
     key = str(name).lower()
     if key == "basic":
         return BasicAI()
@@ -81,4 +104,4 @@ def create_ai(name):
     if key == "strategic":
         from ai.strategic_ai import StrategicAI
         return StrategicAI()
-    raise ValueError(f"?? AI ??: {name}")
+    raise ValueError(f"未知 AI 类型: {name}")

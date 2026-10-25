@@ -52,6 +52,26 @@ class UITest(unittest.TestCase):
             game.exit_replay()
             self.assertEqual(game.state, hg.S_PLAY)
 
+    def test_ai_explanation_panel_renders(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        game.apply_move(5, 5, reason="test")
+        game.last_ai_explanation = {
+            "selected_move": (6, 5),
+            "tactic": "double-threat",
+            "score_type": "heuristic",
+            "elapsed_ms": 12.5,
+            "search_type": "strategy",
+            "candidates": [
+                {"move": (6, 5), "score": 8.2, "reason": "bridge"},
+                {"move": (5, 6), "score": 6.1, "reason": "distance"},
+            ],
+        }
+        game.draw()
+        self.assertEqual(game.last_ai_explanation["selected_move"], (6, 5))
+
     def test_new_board_effects_and_colorblind_rendering(self):
         import hex_game as hg
         from hex_board import RED

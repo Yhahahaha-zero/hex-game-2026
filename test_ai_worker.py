@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """AIWorker、取消信号和 AIResult 生命周期测试。"""
 import threading
 import unittest
@@ -79,6 +79,8 @@ class AIWorkerTest(unittest.TestCase):
         self.assertEqual(result.color, RED)
         self.assertEqual(result.move, (5, 5))
         self.assertEqual(result.reason, "测试")
+        self.assertEqual(result.explanation["selected_move"], (5, 5))
+        self.assertEqual(result.explanation["tactic"], "测试")
         self.assertEqual(board.grid, before_grid)
         self.assertEqual(board.history, before_history)
 

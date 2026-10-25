@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """右侧下棋记录、双计时器、AI 进度和复盘状态面板。"""
 import pygame
 
@@ -38,7 +38,8 @@ class HistoryPanel:
         self.blue_color = main_colors.get(BLUE, theme.BLUE_CLR)
 
     def draw(self, screen, moves, game_no, timers=None, ai_status="",
-             replay_enabled=True, replay_mode=False, search_stats=None):
+             replay_enabled=True, replay_mode=False, search_stats=None,
+             ai_explanation=None):
         pygame.draw.rect(screen, PANEL_BG, (BOARD_W, 0, PANEL_W, WINDOW_H))
         pygame.draw.line(screen, PANEL_LINE, (BOARD_W, 0), (BOARD_W, WINDOW_H), 2)
 
@@ -84,7 +85,9 @@ class HistoryPanel:
         if not rows:
             self._text(screen, "尚无落子", (BOARD_W + 16, 212),
                        self.body_font, theme.DIM_CLR)
-        if search_stats:
+        if ai_explanation:
+            self._draw_ai_explanation(screen, ai_explanation)
+        elif search_stats:
             self._draw_mcts_chart(screen, search_stats)
         if ai_status:
             self._draw_status(screen, ai_status)
@@ -143,6 +146,40 @@ class HistoryPanel:
                 theme.rrect(screen, (BOARD_W + 92, y + 3, width, 12),
                             theme.GOLD_DEEP, 3)
             y += 24
+
+    def _draw_ai_explanation(self, screen, explanation):
+        top = WINDOW_H - 285
+        self._text(screen, "AI \u51b3\u7b56\u5206\u6790", (BOARD_W + 16, top),
+                   self.body_font, theme.GOLD_DEEP)
+        selected = explanation.get("selected_move")
+        tactic = str(explanation.get("tactic", ""))[:12]
+        selected_text = cell_name(*selected) if selected else "-"
+        self._text(screen, f"\u9009\u62e9 {selected_text} \u00b7 {tactic}",
+                   (BOARD_W + 16, top + 26), self.body_font, theme.TEXT_CLR)
+        score_type = str(explanation.get("score_type", "\u65e0\u8bc4\u5206"))[:18]
+        elapsed = explanation.get("elapsed_ms")
+        elapsed_text = f"{float(elapsed):.1f} ms" if elapsed is not None else "-"
+        self._text(screen, f"{score_type} \u00b7 {elapsed_text}",
+                   (BOARD_W + 16, top + 48), self.body_font, theme.DIM_CLR)
+        pygame.draw.line(screen, PANEL_LINE, (BOARD_W + 12, top + 70),
+                         (BOARD_W + PANEL_W - 12, top + 70), 1)
+
+        y = top + 78
+        for item in list(explanation.get("candidates", ()))[:5]:
+            move = item.get("move")
+            label = cell_name(*move) if move else "-"
+            visits = item.get("visits")
+            score = item.get("score")
+            if visits is not None:
+                metric = f"{int(visits):>3}\u6b21"
+            elif score is not None:
+                metric = f"{float(score):>6.2f}"
+            else:
+                metric = "  -   "
+            reason = str(item.get("reason", ""))[:6]
+            self._text(screen, f"{label:<4} {metric} {reason}",
+                       (BOARD_W + 16, y), self.body_font, theme.TEXT_CLR)
+            y += 23
 
     def _draw_status(self, screen, status):
         status_y = WINDOW_H - 94

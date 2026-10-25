@@ -6,6 +6,7 @@ import time
 
 from ai.evaluation import (clone_board, connection_cost, score_moves,
                            shortest_path_cells)
+from ai.explanation import AIExplanation
 from ai.tactics import (block_multiple_threats, boundary_bridge_bonus,
                         bridge_score_map, find_double_threat_moves,
                         opponent_double_threat_replies, opponent_threats,
@@ -165,7 +166,7 @@ def _mcts(board, player, candidates, time_limit, rng, cancel_event=None):
     from ai.evaluation import clone_board
 
     if not candidates:
-        return None, 0
+        return None, 0, {}
     stats = {move: [0, 0.0] for move in candidates}
     started = time.perf_counter()
     iterations = 0
@@ -209,7 +210,7 @@ def _mcts(board, player, candidates, time_limit, rng, cancel_event=None):
         key=lambda move: 0.78 * (stats[move][1] / max(1, stats[move][0]))
         + 0.22 * _candidate_static(board, move, player),
     )
-    return best, iterations
+    return best, iterations, stats
 
 
 def _candidate_static(board, move, player):
@@ -233,6 +234,7 @@ class HybridAI:
         self.candidate_limit = max(20, int(candidate_limit))
         self.rng = random.Random(seed)
         self._cancel_event = None
+        self.last_explanation = None
 
     def set_seed(self, seed):
         self.rng.seed(seed)
@@ -241,34 +243,95 @@ class HybridAI:
         self._cancel_event = cancel_event
 
 
+    def _publish_explanation(self, move, tactic, started, ranked=None,
+                             stats=None, metadata=None):
+        candidate_rows = []
+        if stats:
+            ordered = sorted(
+                stats.items(),
+                key=lambda item: (item[1][0], item[1][1], item[0]),
+                reverse=True,
+            )
+            moves = [item[0] for item in ordered]
+            if move in moves:
+                moves.remove(move)
+                moves.insert(0, move)
+            for cell in moves[:5]:
+                visits, wins = stats[cell]
+                candidate_rows.append({
+                    "move": cell,
+                    "visits": visits,
+                    "score": round(wins / visits, 4) if visits else 0.0,
+                    "reason": tactic,
+                })
+            score_type = "蒙特卡洛胜率"
+        elif ranked:
+            for score, cell in ranked[:5]:
+                candidate_rows.append({
+                    "move": cell,
+                    "score": round(float(score), 4),
+                    "reason": tactic,
+                })
+            score_type = "启发式综合分"
+        else:
+            candidate_rows.append({"move": move, "score": None, "reason": tactic})
+            score_type = "无评分"
+        self.last_explanation = AIExplanation(
+            selected_move=move,
+            tactic=tactic,
+            candidates=tuple(candidate_rows),
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+            search_type="hybrid-monte-carlo",
+            score_type=score_type,
+            metadata=dict(metadata or {}),
+        )
+
     def choose_move(self, board, player):
+        started = time.perf_counter()
         legal = board.legal_moves()
         if not legal:
             raise ValueError("没有合法落子")
         if not board.history and board.is_empty(5, 5):
-            return (5, 5), "中心开局"
+            move = (5, 5)
+            tactic = "中心开局"
+            self._publish_explanation(move, tactic, started)
+            return move, tactic
 
         wins = winning_moves(board, player)
         if wins:
-            return sorted(wins)[0], "直接获胜"
+            move = sorted(wins)[0]
+            tactic = "直接获胜"
+            self._publish_explanation(move, tactic, started,
+                                      ranked=[(0.0, cell) for cell in wins])
+            return move, tactic
 
         threats = opponent_threats(board, player)
         if len(threats) == 1:
-            return threats[0], "紧急防守"
+            move = threats[0]
+            tactic = "紧急防守"
+            self._publish_explanation(move, tactic, started)
+            return move, tactic
         if len(threats) >= 2:
             move = block_multiple_threats(board, player)
             if move is not None:
-                return move, "多威胁最佳防守"
+                tactic = "多威胁最佳防守"
+                self._publish_explanation(move, tactic, started)
+                return move, tactic
 
         ranked = _ranked_candidates(board, player, self.candidate_limit)
         candidates = [move for _, move in ranked]
         if not candidates:
-            return sorted(legal)[0], "兜底落子"
+            move = sorted(legal)[0]
+            tactic = "兜底落子"
+            self._publish_explanation(move, tactic, started)
+            return move, tactic
 
         double_moves = set(find_double_threat_moves(board, player, candidates))
         for move in candidates:
             if move in double_moves:
-                return move, "创造双威胁"
+                tactic = "创造双威胁"
+                self._publish_explanation(move, tactic, started, ranked=ranked)
+                return move, tactic
 
         ranked, danger_found = _rerank_with_threat_safety(
             board,
@@ -283,7 +346,7 @@ class HybridAI:
         if preview:
             candidates = [move for _, move in preview[:min(8, len(preview))]]
 
-        move, iterations = _mcts(
+        move, iterations, stats = _mcts(
             board, player, candidates, self.time_limit, self.rng,
             cancel_event=self._cancel_event,
         )
@@ -291,5 +354,16 @@ class HybridAI:
             reason = f"Hybrid MCTS {iterations}次"
             if danger_found:
                 reason += " · 双威胁规避"
+            self._publish_explanation(
+                move,
+                reason,
+                started,
+                ranked=ranked,
+                stats=stats,
+                metadata={"iterations": iterations, "danger_found": danger_found},
+            )
             return move, reason
-        return candidates[0], "路径评估"
+        move = candidates[0]
+        reason = "路径评估"
+        self._publish_explanation(move, reason, started, ranked=ranked)
+        return move, reason

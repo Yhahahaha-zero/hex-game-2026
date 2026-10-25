@@ -1,6 +1,9 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Deterministic tactical AI with optional distance, threat and bridge scoring."""
+import time
+
 from ai.evaluation import score_moves
+from ai.explanation import AIExplanation
 from ai.tactics import (block_multiple_threats, boundary_bridge_bonus,
                         bridge_mustplay_cells, bridge_score_map,
                         find_double_threat_moves,
@@ -24,6 +27,7 @@ class StrategicAI:
         self.candidate_limit = max(12, int(candidate_limit))
         self.safety_reply_limit = max(4, int(safety_reply_limit))
         self._cancel_event = None
+        self.last_explanation = None
 
     def set_cancel_event(self, cancel_event):
         self._cancel_event = cancel_event
@@ -83,7 +87,34 @@ class StrategicAI:
         adjusted.sort(key=lambda item: (-item[0], item[1][0], item[1][1]))
         return adjusted, danger_found
 
+    def _finish(self, move, tactic, started, ranked=None, candidates=None,
+                metadata=None):
+        if ranked:
+            items = ranked[:5]
+            candidate_rows = tuple({
+                "move": cell,
+                "score": round(float(score), 4),
+                "reason": tactic,
+            } for score, cell in items)
+        else:
+            candidate_rows = tuple({
+                "move": cell,
+                "score": None,
+                "reason": tactic,
+            } for cell in (candidates or [move])[:5])
+        self.last_explanation = AIExplanation(
+            selected_move=move,
+            tactic=tactic,
+            candidates=candidate_rows,
+            elapsed_ms=round((time.perf_counter() - started) * 1000, 3),
+            search_type="bridge" if self.use_bridges else "strategy",
+            score_type="启发式综合分",
+            metadata=dict(metadata or {}),
+        )
+        return move, tactic
+
     def choose_move(self, board, player):
+        started = time.perf_counter()
         if player not in (RED, BLUE):
             raise ValueError(f"非法颜色编号: {player!r}")
         legal = board.legal_moves()
@@ -92,15 +123,20 @@ class StrategicAI:
 
         wins = winning_moves(board, player)
         if wins:
-            return sorted(wins)[0], "直接获胜"
+            move = sorted(wins)[0]
+            return self._finish(move, "直接获胜", started, candidates=wins)
 
         threats = opponent_threats(board, player)
         if len(threats) == 1:
-            return threats[0], "紧急防守"
+            return self._finish(
+                threats[0], "紧急防守", started, candidates=threats
+            )
         if len(threats) >= 2:
             move = block_multiple_threats(board, player)
             if move is not None:
-                return move, "多威胁最佳防守"
+                return self._finish(
+                    move, "多威胁最佳防守", started, candidates=threats
+                )
 
         candidates = [
             (q, r) for q, r in legal
@@ -115,7 +151,7 @@ class StrategicAI:
             )
             for _, move in top:
                 if move in double_moves:
-                    return move, "创造双威胁"
+                    return self._finish(move, "创造双威胁", started, ranked=ranked)
 
         if self.use_bridges:
             mustplay = bridge_mustplay_cells(board, player)
@@ -126,7 +162,7 @@ class StrategicAI:
                     key=lambda cell: (-score_map.get(cell, float("-inf")),
                                       cell[0], cell[1]),
                 )
-                return move, "桥关键点"
+                return self._finish(move, "桥关键点", started, ranked=ranked)
 
         danger_found = False
         if self.use_double_threat:
@@ -134,7 +170,12 @@ class StrategicAI:
 
         move = ranked[0][1]
         if danger_found:
-            return move, "双威胁规避"
-        if self.use_bridges and bridge_score_map(board, player).get(move, 0) > 0:
-            return move, "桥型评分"
-        return move, "最短距离评分" if self.use_distance else "中心偏好"
+            tactic = "双威胁规避"
+        elif self.use_bridges and bridge_score_map(board, player).get(move, 0) > 0:
+            tactic = "桥型评分"
+        else:
+            tactic = "最短距离评分" if self.use_distance else "中心偏好"
+        return self._finish(
+            move, tactic, started, ranked=ranked,
+            metadata={"danger_found": danger_found},
+        )
