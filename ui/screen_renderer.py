@@ -9,6 +9,8 @@ from game_mode import GameMode
 from hex_board import BLUE, RED, cell_name
 from ui import theme
 from ui.board_renderer import BOARD_W, WINDOW_H, hex_corners
+from ui.history_panel import PANEL_W
+WINDOW_W = BOARD_W + PANEL_W
 
 CNAMES = {RED: "\u7ea2\u65b9", BLUE: "\u84dd\u65b9"}
 
@@ -23,7 +25,7 @@ def make_confetti(renderer):
     particles = []
     for _ in range(48):
         particles.append((
-            rng.uniform(20, BOARD_W - 20),
+            rng.uniform(20, WINDOW_W - 20),
             rng.uniform(-WINDOW_H * 0.7, -20),
             rng.uniform(-45, 45),
             rng.uniform(95, 210),
@@ -131,12 +133,12 @@ class OverlayRenderer:
             value = min(1.0, max(0.0, (elapsed - start) / duration))
             return 1 - (1 - value) ** 3
 
-        decoration = pygame.Surface((BOARD_W, WINDOW_H), pygame.SRCALPHA)
+        decoration = pygame.Surface((WINDOW_W, WINDOW_H), pygame.SRCALPHA)
         for cx, cy, size, color, alpha in (
             (58, 110, 42, self.game.renderer.CC[1], 70),
-            (BOARD_W - 58, 155, 55, self.game.renderer.CC[2], 58),
+            (WINDOW_W - 58, 155, 55, self.game.renderer.CC[2], 58),
             (72, WINDOW_H - 150, 52, theme.GOLD, 58),
-            (BOARD_W - 88, WINDOW_H - 225, 40, theme.SAGE, 64),
+            (WINDOW_W - 88, WINDOW_H - 225, 40, theme.SAGE, 64),
             (135, 245, 10, theme.GOLD_DEEP, 70),
         ):
             pygame.draw.polygon(decoration, (*color, alpha),
@@ -144,7 +146,7 @@ class OverlayRenderer:
         decoration.set_alpha(int(255 * ramp(0, 500)))
         screen.blit(decoration, (0, 0))
 
-        center_x = BOARD_W // 2
+        center_x = WINDOW_W // 2
         amount = ramp(120, 520)
         if amount:
             title = self.game.font_xl.render("海克斯棋", True, theme.TEXT_CLR)
@@ -231,7 +233,7 @@ class OverlayRenderer:
         winner = game.winner
         accent = game.renderer.main_color(winner)
         rect = pygame.Rect(0, 0, 500, 300)
-        rect.center = (BOARD_W // 2, WINDOW_H // 2 - 8)
+        rect.center = (WINDOW_W // 2, WINDOW_H // 2 - 8)
         panel = theme.panel_surface(rect, accent)
         screen.blit(panel, (rect.x - 14, rect.y - 14))
 
@@ -269,7 +271,7 @@ class OverlayRenderer:
         screen = game.screen
         screen.blit(theme.veil_surface(*screen.get_size(), alpha=200), (0, 0))
         rect = pygame.Rect(0, 0, 520, 320)
-        rect.center = (BOARD_W // 2, WINDOW_H // 2 - 8)
+        rect.center = (WINDOW_W // 2, WINDOW_H // 2 - 8)
         panel = theme.panel_surface(rect, theme.GOLD_DEEP)
         screen.blit(panel, (rect.x - 14, rect.y - 14))
 
