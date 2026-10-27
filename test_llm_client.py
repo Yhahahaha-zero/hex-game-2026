@@ -106,7 +106,7 @@ class LLMClientTest(unittest.TestCase):
         transport = FakeTransport([ok_response("分析完成")])
         client = QwenClient(make_config(), transport=transport, sleep_func=lambda _: None)
         response = client.analyze_text(
-            "分析局面", system_prompt="你是 Hex 助手"
+            "分析局面", system_prompt="你是 Hex 助手", enable_thinking=False
         )
 
         self.assertEqual(response.text, "分析完成")
@@ -125,6 +125,7 @@ class LLMClientTest(unittest.TestCase):
         self.assertFalse(call["payload"]["stream"])
         self.assertEqual(call["payload"]["temperature"], 0.1)
         self.assertEqual(call["payload"]["max_tokens"], 1000)
+        self.assertFalse(call["payload"]["enable_thinking"])
 
     def test_model_and_token_limit_can_be_overridden(self):
         transport = FakeTransport([ok_response()])

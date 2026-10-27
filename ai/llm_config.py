@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Safe loading and validation for optional LLM configuration.
 
 The API key is deliberately excluded from repr(), logs and safe descriptions.
@@ -38,6 +38,8 @@ class LLMConfig:
     max_retries: int = 1
     max_output_tokens: int = 1000
     temperature: float = 0.1
+    enable_thinking: bool = False
+    analysis_timeout_seconds: float = 30.0
 
     @property
     def key_configured(self) -> bool:
@@ -65,6 +67,8 @@ class LLMConfig:
             "max_retries": self.max_retries,
             "max_output_tokens": self.max_output_tokens,
             "temperature": self.temperature,
+            "enable_thinking": self.enable_thinking,
+            "analysis_timeout_seconds": self.analysis_timeout_seconds,
         }
 
 
@@ -203,6 +207,18 @@ def load_llm_config(env_file=None, environ=None) -> LLMConfig:
     if not 0.0 <= temperature <= 2.0:
         raise LLMConfigError("LLM_TEMPERATURE 必须在 0 到 2 之间")
 
+    analysis_timeout_seconds = _parse_float(
+        _setting(file_values, env, "LLM_ANALYSIS_TIMEOUT_SECONDS", "30"),
+        "LLM_ANALYSIS_TIMEOUT_SECONDS",
+    )
+    if not 5.0 <= analysis_timeout_seconds <= 120.0:
+        raise LLMConfigError("LLM_ANALYSIS_TIMEOUT_SECONDS 必须在 5 到 120 秒之间")
+
+    enable_thinking = _parse_bool(
+        _setting(file_values, env, "LLM_ENABLE_THINKING", "0"),
+        "LLM_ENABLE_THINKING",
+    )
+
     if enabled and not api_key:
         raise LLMConfigError("启用大模型时必须配置 LLM_API_KEY")
     if enabled and not base_url:
@@ -219,4 +235,6 @@ def load_llm_config(env_file=None, environ=None) -> LLMConfig:
         max_retries=max_retries,
         max_output_tokens=max_output_tokens,
         temperature=temperature,
+        enable_thinking=enable_thinking,
+        analysis_timeout_seconds=analysis_timeout_seconds,
     )

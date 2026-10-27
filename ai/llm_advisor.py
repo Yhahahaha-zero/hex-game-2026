@@ -81,7 +81,8 @@ class LLMAdvisor:
     """Analyze a read-only board observation; never mutate game state."""
 
     def __init__(self, client, *, model=None, timeout=None,
-                 max_tokens=1000, prompt_version=PROMPT_VERSION):
+                 max_tokens=1000, prompt_version=PROMPT_VERSION,
+                 enable_thinking=False):
         if client is None:
             raise ValueError("client 不能为空")
         token_limit = int(max_tokens)
@@ -92,6 +93,7 @@ class LLMAdvisor:
         self.timeout = timeout
         self.max_tokens = token_limit
         self.prompt_version = str(prompt_version)
+        self.enable_thinking = bool(enable_thinking)
 
     def analyze(self, observation):
         messages = build_advisor_messages(observation)
@@ -102,6 +104,7 @@ class LLMAdvisor:
             model=self.model,
             timeout=self.timeout,
             max_tokens=self.max_tokens,
+            enable_thinking=self.enable_thinking,
         )
         return parse_analysis_text(
             response.text,

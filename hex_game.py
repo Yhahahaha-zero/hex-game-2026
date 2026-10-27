@@ -5,6 +5,11 @@ import os
 import pygame
 
 from ai.worker import AIWorker
+from ai.analysis_worker import AnalysisWorker
+from ai.board_observation import build_engine_observation
+from ai.llm_advisor import LLMAdvisor
+from ai.llm_client import LLMDisabledError, create_llm_client
+from ai.llm_config import load_llm_config
 from game_mode import GameMode
 from game_records import (RecordValidationError, ReplaySession,
                           latest_record, load_record, save_match_record)
@@ -16,6 +21,7 @@ from hex_engine import (HexEngine, STATE_GAME_OVER, STATE_MATCH_OVER,
 from ui import theme
 from ui.board_renderer import (BOARD_W, WINDOW_H, BoardRenderer,
                                cell_center, hex_corners, pixel_to_hex)
+from ui.analysis_panel import AnalysisPanel
 from ui.history_panel import HistoryPanel, PANEL_W
 from ui.screen_renderer import OverlayRenderer, make_confetti
 from ui.sound import SoundManager
@@ -65,7 +71,7 @@ class HexGame:
 
     """界面控制器：规则由 HexEngine 管理，AI 和绘制由独立模块完成。"""
 
-    def __init__(self):
+    def __init__(self, analysis_advisor_factory=None):
         pygame.init()
         self.sound = SoundManager()
         self.window = pygame.display.set_mode(self._initial_window_size(), pygame.RESIZABLE)
@@ -83,6 +89,20 @@ class HexGame:
         self.history_panel.set_fonts(self.font_m, self.font_xs)
         self.history_panel.set_palette(self.renderer.CC)
         self.overlay = OverlayRenderer(self)
+        self.analysis_panel = AnalysisPanel()
+        self.analysis_panel.set_fonts(self.font_m, self.font_s, self.font_xs)
+        self._analysis_advisor_factory = analysis_advisor_factory
+        self._analysis_advisor = None
+        self.analysis_worker = None
+        self._retired_analysis_workers = []
+        self.analysis_request_id = 0
+        self.analysis_status = "idle"
+        self.analysis_error = ""
+        self.last_analysis = None
+        self.analysis_model = ""
+        self.analysis_elapsed_ms = None
+        self.analysis_position_id = ""
+        self.analysis_configured = self._read_analysis_configured()
         self.timer = DualGameTimer()
         self.timer_history = []
         self.mode = None
@@ -153,6 +173,181 @@ class HexGame:
         else:
             self.last_move = None
 
+    def _read_analysis_configured(self):
+        if self._analysis_advisor_factory is not None:
+            return True
+        try:
+            return bool(load_llm_config().enabled)
+        except Exception:
+            return False
+
+    def _load_analysis_advisor(self):
+        if self._analysis_advisor is not None:
+            return self._analysis_advisor
+        if self._analysis_advisor_factory is not None:
+            advisor = self._analysis_advisor_factory()
+        else:
+            config = load_llm_config()
+            if not config.enabled:
+                raise LLMDisabledError(
+                    "大模型尚未启用，请在 .env.local 中设置 LLM_ENABLED=1"
+                )
+            advisor = LLMAdvisor(
+                create_llm_client(config),
+                timeout=config.analysis_timeout_seconds,
+                enable_thinking=config.enable_thinking,
+            )
+        if advisor is None:
+            raise RuntimeError("分析助手初始化失败")
+        self._analysis_advisor = advisor
+        return advisor
+
+    def _cancel_analysis_worker(self, timeout=0.1):
+        for retired in self._retired_analysis_workers:
+            retired.cancel()
+        worker = self.analysis_worker
+        if worker is None:
+            self._prune_retired_analysis_workers()
+            return True
+        worker.cancel()
+        stopped = worker.join(timeout)
+        if not stopped:
+            self._retired_analysis_workers.append(worker)
+        self.analysis_worker = None
+        self._prune_retired_analysis_workers()
+        return stopped
+
+    def _prune_retired_analysis_workers(self):
+        self._retired_analysis_workers = [
+            worker for worker in self._retired_analysis_workers
+            if worker.is_alive()
+        ]
+
+    def _invalidate_analysis(self, mark_stale=False, hide=False):
+        was_loading = self.analysis_worker is not None
+        had_result = self.last_analysis is not None
+        self._cancel_analysis_worker()
+        self.analysis_request_id += 1
+        self.last_analysis = None
+        self.analysis_model = ""
+        self.analysis_elapsed_ms = None
+        self.analysis_position_id = ""
+        if mark_stale and (was_loading or had_result):
+            self.analysis_status = "stale"
+            self.analysis_error = "局面已变化，请重新分析。"
+            self.analysis_panel.show()
+        else:
+            self.analysis_status = "idle"
+            self.analysis_error = ""
+            if hide:
+                self.analysis_panel.hide()
+
+    def _current_analysis_position_id(self):
+        try:
+            observation = build_engine_observation(
+                self.engine, history_limit=0, candidate_limit=0
+            )
+            return observation["position_id"]
+        except Exception:
+            return ""
+
+    def _show_analysis_message(self, status, message):
+        self.analysis_status = str(status)
+        self.analysis_error = str(message)
+        self.analysis_panel.show()
+
+    def start_analysis(self):
+        if self.analysis_worker is not None and self.analysis_worker.is_alive():
+            self.analysis_panel.show()
+            return False
+        if self.state not in (S_PLAY, S_WIN, S_MATCH_END):
+            message = (
+                "复盘模式暂不支持大模型分析。"
+                if self.state == S_REPLAY else
+                "开始一局游戏后才能进行 AI 分析。"
+            )
+            self._show_analysis_message("error", message)
+            return False
+        try:
+            observation = build_engine_observation(self.engine)
+        except Exception as exc:
+            self._show_analysis_message("error", f"生成棋局观察数据失败：{exc}")
+            return False
+
+        self._cancel_analysis_worker()
+        self.analysis_request_id += 1
+        self.analysis_status = "loading"
+        self.analysis_error = ""
+        self.last_analysis = None
+        self.analysis_model = ""
+        self.analysis_elapsed_ms = None
+        self.analysis_position_id = observation["position_id"]
+        self.analysis_panel.show()
+        worker = AnalysisWorker(
+            observation,
+            self.analysis_request_id,
+            advisor_loader=self._load_analysis_advisor,
+        )
+        self.analysis_worker = worker
+        worker.start()
+        self.sound.play("click")
+        return True
+
+    def close_analysis(self):
+        if self.analysis_worker is not None:
+            self._cancel_analysis_worker()
+            self.analysis_request_id += 1
+            self.analysis_status = "idle"
+            self.analysis_error = ""
+        self.analysis_panel.hide()
+
+    def toggle_analysis(self):
+        if self.analysis_panel.visible:
+            self.close_analysis()
+            return False
+        return self.start_analysis()
+
+    def update_analysis(self):
+        self._prune_retired_analysis_workers()
+        worker = self.analysis_worker
+        if worker is None or worker.is_alive():
+            return False
+        self.analysis_worker = None
+        result = worker.result
+        if result is None or result.request_id != self.analysis_request_id:
+            return False
+        if result.status == "cancelled":
+            if self.analysis_status != "stale":
+                self.analysis_status = "idle"
+                self.analysis_error = ""
+            return False
+        if result.status == "error":
+            self.analysis_status = (
+                "disabled" if result.error_type == "LLMDisabledError" else "error"
+            )
+            self.analysis_error = result.error or "分析失败"
+            if result.error_type == "LLMDisabledError":
+                self.analysis_configured = False
+            self.analysis_panel.show()
+            return False
+        if result.status != "complete" or result.analysis is None:
+            self._show_analysis_message("error", "分析结果无效")
+            return False
+        if result.position_id != self._current_analysis_position_id():
+            self.last_analysis = None
+            self._show_analysis_message("stale", "局面已变化，分析结果已过期。")
+            return False
+
+        self.last_analysis = result.analysis.as_dict()
+        self.analysis_model = result.analysis.model_name
+        self.analysis_elapsed_ms = result.analysis.elapsed_ms
+        self.analysis_position_id = result.position_id
+        self.analysis_status = "complete"
+        self.analysis_error = ""
+        self.analysis_configured = True
+        self.analysis_panel.show()
+        return True
+
     def _cancel_ai_worker(self, timeout=0.6):
         for retired in self._retired_workers:
             retired.cancel()
@@ -182,6 +377,7 @@ class HexGame:
         self.last_ai_explanation = None
 
     def _reset_transient_state(self):
+        self._invalidate_analysis(hide=True)
         self._cancel_ai_worker()
         self.timer_history = []
         self.hover = None
@@ -293,6 +489,7 @@ class HexGame:
             document = load_record(path)
             self.replay = ReplaySession(document)
             self._cancel_ai_worker()
+            self._invalidate_analysis(hide=True)
             self.replay_return_state = self.state
             self.timer.pause()
             self.state = S_REPLAY
@@ -365,9 +562,19 @@ class HexGame:
             else:
                 self.start_replay()
             return True
+        if self.history_panel.analysis_button.collidepoint(pos):
+            self.start_analysis()
+            return True
         return False
 
     def on_click(self, pos):
+        if self.analysis_panel.visible:
+            action = self.analysis_panel.handle_click(pos)
+            if action == "retry":
+                self.start_analysis()
+            elif action == "close":
+                self.close_analysis()
+            return
         if self._handle_panel_click(pos):
             return
         if self.state == S_START:
@@ -433,6 +640,7 @@ class HexGame:
         if undone <= 0:
             self.panel_message = "悔棋失败"
             return False
+        self._invalidate_analysis(mark_stale=True)
 
         del self.timer_history[-undone:]
         self.timer.restore(timer_snapshot)
@@ -460,6 +668,7 @@ class HexGame:
         except IllegalMoveError:
             return False
         self.timer_history.append(timer_snapshot)
+        self._invalidate_analysis(mark_stale=True)
         now = pygame.time.get_ticks()
         self.last_move = (q, r, color, reason)
         self.last_move_at = now
@@ -554,6 +763,14 @@ class HexGame:
         self.ai_worker.start()
 
     def quit(self):
+        self._cancel_analysis_worker(timeout=1.0)
+        for worker in self._retired_analysis_workers:
+            worker.cancel()
+            worker.join(0.2)
+        self._retired_analysis_workers = [
+            worker for worker in self._retired_analysis_workers
+            if worker.is_alive()
+        ]
         self._cancel_ai_worker(timeout=1.0)
         for worker in self._retired_workers:
             worker.cancel()
@@ -573,6 +790,13 @@ class HexGame:
                     self.quit()
                 if event.type == pygame.KEYDOWN:
                     ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+                    if event.key == pygame.K_F6:
+                        self.toggle_analysis()
+                        continue
+                    if self.analysis_panel.visible:
+                        if event.key == pygame.K_ESCAPE:
+                            self.close_analysis()
+                        continue
                     if event.key == pygame.K_ESCAPE:
                         if self.state == S_REPLAY:
                             self.exit_replay()
@@ -618,6 +842,7 @@ class HexGame:
                   and not self.paused and self.win_at
                   and pygame.time.get_ticks() - self.win_at > WATCH_AUTO_MS):
                 self.advance_match()
+            self.update_analysis()
             self.draw()
             self._present()
             self.clock.tick(60)
@@ -678,6 +903,8 @@ class HexGame:
                     and self.state in (S_PLAY, S_WIN, S_MATCH_END)
                     and self.engine.can_undo()
                 ),
+                analysis_active=self.analysis_status == "loading",
+                analysis_available=self.analysis_configured,
             )
         self.draw_hud()
         if self.state == S_START:
@@ -688,6 +915,16 @@ class HexGame:
             self.draw_match_end()
         elif self.state == S_REPLAY:
             self.draw_replay_banner()
+        if self.analysis_panel.visible:
+            self.analysis_panel.draw(
+                self.screen,
+                status=self.analysis_status,
+                analysis=self.last_analysis,
+                error=self.analysis_error,
+                model_name=self.analysis_model,
+                elapsed_ms=self.analysis_elapsed_ms,
+                position_id=self.analysis_position_id,
+            )
 
     def _panel_status(self):
         if self.state == S_REPLAY and self.replay is not None:

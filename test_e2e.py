@@ -13,6 +13,7 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 from game_mode import GameMode
 from hex_board import HexBoard
 from hex_engine import STATE_GAME_OVER, STATE_MATCH_OVER
+from ai.analysis_result import AnalysisResult, CandidateAnalysis
 
 
 class BlockingAI:
@@ -42,6 +43,63 @@ class ImmediateAI:
         if board.is_empty(*self.move):
             return self.move, "immediate"
         return board.legal_moves()[0], "first legal"
+
+
+class ImmediateAnalysisAdvisor:
+    def __init__(self, delay=0.03):
+        self.delay = delay
+        self.calls = 0
+
+    def analyze(self, observation):
+        import time
+        self.calls += 1
+        time.sleep(self.delay)
+        move = tuple(observation["candidates"][0]["move"])
+        return AnalysisResult(
+            schema_version=1,
+            prompt_version="test-advisor-v1",
+            position_id=observation["position_id"],
+            summary="测试分析完成",
+            priority="balanced",
+            candidates=(CandidateAnalysis(
+                move=move,
+                preference="prefer",
+                pros="连接更直接",
+                cons="仍需防守",
+            ),),
+            recommended_move=move,
+            subjective_confidence=0.5,
+            warnings=("主观值不是胜率",),
+            model_name="mock-analysis",
+            elapsed_ms=12.0,
+            usage={"total_tokens": 10},
+        )
+
+
+class BlockingAnalysisAdvisor:
+    def __init__(self):
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = 0
+
+    def analyze(self, observation):
+        self.calls += 1
+        self.started.set()
+        self.release.wait(1.0)
+        return AnalysisResult(
+            schema_version=1,
+            prompt_version="test-advisor-v1",
+            position_id=observation["position_id"],
+            summary="阻塞分析",
+            priority="balanced",
+            model_name="blocking-mock",
+        )
+
+
+class FailingAnalysisAdvisor:
+    def analyze(self, observation):
+        from ai.llm_client import LLMDisabledError
+        raise LLMDisabledError("测试禁用")
 
 
 class EndToEndTest(unittest.TestCase):
@@ -248,6 +306,114 @@ class EndToEndTest(unittest.TestCase):
         self.assertLessEqual(abs(canvas_x - hg.WINDOW_W), 1)
         self.assertLessEqual(abs(canvas_y - hg.WINDOW_H), 1)
 
+
+    def test_analysis_completes_and_becomes_stale_after_move(self):
+        import hex_game as hg
+
+        advisor = ImmediateAnalysisAdvisor()
+        game = hg.HexGame(analysis_advisor_factory=lambda: advisor)
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        game.apply_move(5, 5, reason="before analysis")
+        self.assertTrue(game.start_analysis())
+        worker = game.analysis_worker
+        self.assertIsNotNone(worker)
+        self.assertTrue(worker.join(1.0))
+        self.assertTrue(game.update_analysis())
+
+        self.assertEqual(game.analysis_status, "complete")
+        self.assertTrue(game.analysis_panel.visible)
+        self.assertEqual(game.last_analysis["summary"], "测试分析完成")
+        self.assertEqual(game.analysis_model, "mock-analysis")
+        self.assertEqual(advisor.calls, 1)
+        game.draw()
+
+        game.apply_move(4, 5, reason="after analysis")
+        self.assertEqual(game.analysis_status, "stale")
+        self.assertIsNone(game.last_analysis)
+        self.assertIn("局面已变化", game.analysis_error)
+
+    def test_reset_cancels_active_analysis_and_hides_panel(self):
+        import hex_game as hg
+
+        advisor = BlockingAnalysisAdvisor()
+        game = hg.HexGame(analysis_advisor_factory=lambda: advisor)
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        self.assertTrue(game.start_analysis())
+        worker = game.analysis_worker
+        self.assertIsNotNone(worker)
+        self.assertTrue(advisor.started.wait(1.0))
+
+        game.reset_match(show_intro=True)
+        self.assertIsNone(game.analysis_worker)
+        self.assertTrue(worker.cancelled)
+        self.assertFalse(game.analysis_panel.visible)
+        advisor.release.set()
+        self.assertTrue(worker.join(1.0))
+        self.assertEqual(worker.result.status, "cancelled")
+        self.assertIsNone(game.last_analysis)
+
+    def test_analysis_disabled_error_is_displayed_without_crashing(self):
+        import hex_game as hg
+
+        game = hg.HexGame(
+            analysis_advisor_factory=lambda: FailingAnalysisAdvisor()
+        )
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        self.assertTrue(game.start_analysis())
+        worker = game.analysis_worker
+        self.assertTrue(worker.join(1.0))
+        self.assertFalse(game.update_analysis())
+        self.assertEqual(game.analysis_status, "disabled")
+        self.assertFalse(game.analysis_configured)
+        self.assertTrue(game.analysis_panel.visible)
+        self.assertIn("测试禁用", game.analysis_error)
+        game.draw()
+
+    def test_replay_mode_rejects_analysis_request(self):
+        import hex_game as hg
+
+        game = hg.HexGame(analysis_advisor_factory=ImmediateAnalysisAdvisor)
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        game.state = hg.S_REPLAY
+        self.assertFalse(game.start_analysis())
+        self.assertEqual(game.analysis_status, "error")
+        self.assertTrue(game.analysis_panel.visible)
+        self.assertIn("复盘", game.analysis_error)
+
+    def test_quit_cancels_active_analysis(self):
+        import hex_game as hg
+
+        advisor = BlockingAnalysisAdvisor()
+        game = hg.HexGame(analysis_advisor_factory=lambda: advisor)
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        self.assertTrue(game.start_analysis())
+        worker = game.analysis_worker
+        self.assertTrue(advisor.started.wait(1.0))
+
+        with self.assertRaises(SystemExit):
+            game.quit()
+        self.assertTrue(worker.cancelled)
+        advisor.release.set()
+        self.assertTrue(worker.join(1.0))
+        self.assertEqual(worker.result.status, "cancelled")
+
+    def test_closing_analysis_panel_cancels_active_request(self):
+        import hex_game as hg
+
+        advisor = BlockingAnalysisAdvisor()
+        game = hg.HexGame(analysis_advisor_factory=lambda: advisor)
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        self.assertTrue(game.start_analysis())
+        worker = game.analysis_worker
+        self.assertTrue(advisor.started.wait(1.0))
+        game.draw()
+        game.on_click(game.analysis_panel.close_button.center)
+        self.assertTrue(worker.cancelled)
+        self.assertFalse(game.analysis_panel.visible)
+        self.assertEqual(game.analysis_status, "idle")
+        advisor.release.set()
+        self.assertTrue(worker.join(1.0))
+        self.assertEqual(worker.result.status, "cancelled")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

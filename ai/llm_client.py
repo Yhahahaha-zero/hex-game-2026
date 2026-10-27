@@ -249,11 +249,11 @@ class LLMClient:
 
     available = True
 
-    def chat(self, messages, *, model=None, timeout=None, max_tokens=None):
+    def chat(self, messages, *, model=None, timeout=None, max_tokens=None, enable_thinking=None):
         raise NotImplementedError
 
     def analyze_text(self, prompt, system_prompt=None, *, model=None,
-                     timeout=None, max_tokens=None):
+                     timeout=None, max_tokens=None, enable_thinking=None):
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": str(system_prompt)})
@@ -263,10 +263,11 @@ class LLMClient:
             model=model,
             timeout=timeout,
             max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
         )
 
     def analyze_image(self, prompt, image_path, *, model=None,
-                      timeout=None, max_tokens=None):
+                      timeout=None, max_tokens=None, enable_thinking=None):
         image_url = _image_data_url(image_path)
         messages = [{
             "role": "user",
@@ -280,6 +281,7 @@ class LLMClient:
             model=model,
             timeout=timeout,
             max_tokens=max_tokens,
+            enable_thinking=enable_thinking,
         )
 
 
@@ -289,7 +291,7 @@ class DisabledLLMClient(LLMClient):
     def __init__(self, reason="大模型功能未启用"):
         self.reason = str(reason)
 
-    def chat(self, messages, *, model=None, timeout=None, max_tokens=None):
+    def chat(self, messages, *, model=None, timeout=None, max_tokens=None, enable_thinking=None):
         raise LLMDisabledError(self.reason)
 
 
@@ -305,9 +307,10 @@ class MockLLMClient(LLMClient):
         self.model = str(model)
         self.calls = []
 
-    def chat(self, messages, *, model=None, timeout=None, max_tokens=None):
+    def chat(self, messages, *, model=None, timeout=None, max_tokens=None, enable_thinking=None):
         normalized = _validate_messages(messages)
         self.calls.append({
+            "enable_thinking": enable_thinking,
             "messages": [dict(item) for item in normalized],
             "model": model or self.model,
             "timeout": timeout,
@@ -349,7 +352,7 @@ class QwenClient(LLMClient):
         self._transport = transport or _default_transport
         self._sleep = sleep_func or time.sleep
 
-    def chat(self, messages, *, model=None, timeout=None, max_tokens=None):
+    def chat(self, messages, *, model=None, timeout=None, max_tokens=None, enable_thinking=None):
         normalized = _validate_messages(messages)
         selected_model = str(model or self.config.analysis_model).strip()
         if not selected_model:
@@ -378,6 +381,8 @@ class QwenClient(LLMClient):
             "max_tokens": token_limit,
             "stream": False,
         }
+        if enable_thinking is not None:
+            payload["enable_thinking"] = bool(enable_thinking)
         try:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         except (TypeError, ValueError) as exc:

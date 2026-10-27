@@ -59,6 +59,7 @@ def main(argv=None):
                 model=model,
                 timeout=args.timeout,
                 max_tokens=args.max_tokens,
+                enable_thinking=config.enable_thinking,
             )
         else:
             model = config.analysis_model
@@ -67,6 +68,7 @@ def main(argv=None):
                 model=model,
                 timeout=args.timeout,
                 max_tokens=args.max_tokens,
+                enable_thinking=config.enable_thinking,
             )
     except (LLMClientError, OSError) as exc:
         print(f"[ERROR] {type(exc).__name__}: {exc}")

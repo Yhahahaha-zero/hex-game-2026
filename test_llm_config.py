@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """Tests for safe LLM configuration and secret redaction."""
 from pathlib import Path
 import tempfile
@@ -27,6 +27,8 @@ class LLMConfigTest(unittest.TestCase):
 
         self.assertFalse(config.enabled)
         self.assertFalse(config.key_configured)
+        self.assertFalse(config.enable_thinking)
+        self.assertEqual(config.analysis_timeout_seconds, 30.0)
         self.assertEqual(config.analysis_model, "qwen3.8-flash")
         self.assertEqual(config.vision_model, "qwen3-vl-plus")
 
@@ -45,12 +47,14 @@ class LLMConfigTest(unittest.TestCase):
                 LLM_MAX_RETRIES=1
                 LLM_MAX_OUTPUT_TOKENS=1000
                 LLM_TEMPERATURE=0.1
+                LLM_ENABLE_THINKING=1
                 """,
             )
             config = load_llm_config(path, environ={})
 
         self.assertTrue(config.enabled)
         self.assertTrue(config.key_configured)
+        self.assertTrue(config.enable_thinking)
         self.assertEqual(config.api_key, "test-secret")
         self.assertEqual(config.base_url, "https://example.test/v1")
         self.assertEqual(
@@ -114,6 +118,7 @@ class LLMConfigTest(unittest.TestCase):
     def test_invalid_values_fail_with_clear_errors(self):
         cases = (
             ("LLM_ENABLED=maybe", "LLM_ENABLED"),
+            ("LLM_ENABLED=0\nLLM_ENABLE_THINKING=maybe", "LLM_ENABLE_THINKING"),
             ("LLM_ENABLED=0\nLLM_PROVIDER=unknown", "LLM_PROVIDER"),
             ("LLM_ENABLED=0\nLLM_BASE_URL=ftp://example.test", "LLM_BASE_URL"),
             ("LLM_ENABLED=0\nLLM_TIMEOUT_SECONDS=0", "LLM_TIMEOUT_SECONDS"),

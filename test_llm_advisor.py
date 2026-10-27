@@ -239,6 +239,7 @@ class LLMAdvisorTest(unittest.TestCase):
         self.assertEqual(call["model"], "custom-model")
         self.assertEqual(call["timeout"], 3.5)
         self.assertEqual(call["max_tokens"], 64)
+        self.assertFalse(call["enable_thinking"])
 
     def test_oversized_prompt_is_rejected(self):
         observation = copy.deepcopy(self.observation)

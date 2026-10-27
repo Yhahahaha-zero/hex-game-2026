@@ -150,5 +150,99 @@ class UITest(unittest.TestCase):
         self.assertEqual(column.match_scores, [1, 0])
 
 
+    def test_analysis_button_layout_and_panel_actions(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        self.assertGreaterEqual(
+            game.history_panel.analysis_button.top,
+            game.history_panel.replay_button.bottom + 4,
+        )
+        self.assertLess(game.history_panel.analysis_button.bottom, 264)
+
+        game.analysis_panel.draw(
+            game.screen,
+            status="complete",
+            analysis={
+                "summary": "测试局面摘要",
+                "priority": "defense",
+                "threats": [{
+                    "move": [4, 5],
+                    "severity": "high",
+                    "reason": "关键阻断点",
+                }],
+                "candidates": [{
+                    "move": [5, 4],
+                    "preference": "prefer",
+                    "pros": "改善连接",
+                    "cons": "防守压力",
+                }],
+                "warnings": ["主观值不是胜率"],
+                "subjective_confidence": 0.7,
+            },
+            error="",
+            model_name="mock-model",
+            elapsed_ms=12.5,
+            position_id="hex1-test-position",
+        )
+        self.assertTrue(game.analysis_panel.visible)
+        self.assertGreater(game.analysis_panel.panel_rect.width, 0)
+        self.assertEqual(
+            game.analysis_panel.handle_click(game.analysis_panel.retry_button.center),
+            "retry",
+        )
+        self.assertEqual(
+            game.analysis_panel.handle_click(game.analysis_panel.close_button.center),
+            "close",
+        )
+        self.assertFalse(game.analysis_panel.visible)
+
+    def test_analysis_panel_renders_loading_error_and_disabled_states(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        for status in ("loading", "error", "disabled", "stale"):
+            with self.subTest(status=status):
+                game.analysis_panel.draw(
+                    game.screen,
+                    status=status,
+                    analysis=None,
+                    error="测试状态",
+                    model_name="",
+                    elapsed_ms=None,
+                    position_id="hex1-test",
+                )
+                self.assertTrue(game.analysis_panel.visible)
+                game.analysis_panel.hide()
+
+    def test_analysis_button_click_starts_mock_analysis(self):
+        import hex_game as hg
+        from ai.analysis_result import AnalysisResult
+
+        class Advisor:
+            def analyze(self, observation):
+                return AnalysisResult(
+                    schema_version=1,
+                    prompt_version="ui-test-v1",
+                    position_id=observation["position_id"],
+                    summary="按钮触发的分析",
+                    priority="balanced",
+                    model_name="ui-mock",
+                    elapsed_ms=1.0,
+                )
+
+        game = hg.HexGame(analysis_advisor_factory=Advisor)
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        game.on_click(game.history_panel.analysis_button.center)
+        worker = game.analysis_worker
+        self.assertIsNotNone(worker)
+        self.assertTrue(worker.join(1.0))
+        self.assertTrue(game.update_analysis())
+        self.assertEqual(game.analysis_status, "complete")
+        self.assertEqual(game.last_analysis["summary"], "按钮触发的分析")
+        game.draw()
+        game.on_click(game.analysis_panel.close_button.center)
+        self.assertFalse(game.analysis_panel.visible)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
