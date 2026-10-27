@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Versioned SQLite schema contract for experience memory.
 
-P0-A defines DDL only. The production store and migration runner are added in
-P0-B, so importing this module never creates or modifies a database.
+Importing this module is side-effect free. ExperienceStore owns migrations,
+connections, transactions and all database I/O.
 """
 from __future__ import annotations
 
@@ -24,6 +24,42 @@ INTEGRITY_STATUSES = ("valid", "invalid", "unknown")
 RULE_STATUSES = ("valid", "invalid", "unknown")
 RESULT_STATUSES = ("known", "unknown", "invalid")
 SOURCE_TYPES = ("human_vs_ai", "ai_vs_ai", "human_vs_human", "imported", "self_play")
+MEMORY_TABLES = ("matches", "games", "positions", "decisions")
+MEMORY_INDEXES = (
+    "idx_positions_canonical",
+    "idx_positions_rules_ply",
+    "idx_decisions_game",
+    "idx_decisions_position",
+    "idx_decisions_quality",
+)
+TABLE_COLUMNS = {
+    "matches": (
+        "match_id", "schema_version", "rules_version", "mode_key", "mode_name",
+        "red_team", "blue_team", "source_type", "started_at", "ended_at",
+        "status", "record_id",
+    ),
+    "games": (
+        "game_id", "match_id", "game_no", "red_actor_type", "blue_actor_type",
+        "red_actor_id", "blue_actor_id", "red_ai_name", "blue_ai_name",
+        "red_ai_version", "blue_ai_version", "winner_color",
+        "termination_reason", "status", "started_at", "ended_at",
+    ),
+    "positions": (
+        "position_id", "experience_key", "canonical_key", "rules_version",
+        "feature_version", "board_json", "current_color", "ply",
+        "features_json", "created_at",
+    ),
+    "decisions": (
+        "decision_id", "game_id", "position_id", "ply", "actor_type",
+        "actor_color", "actor_id", "ai_name", "ai_version", "candidate_json",
+        "search_config_json", "chosen_q", "chosen_r", "result",
+        "decision_quality", "training_eligible", "integrity_status",
+        "rule_status", "result_status", "validation_reason",
+        "validator_version", "created_at",
+    ),
+}
+SUPPORTED_SCHEMA_VERSIONS = tuple(range(MEMORY_SCHEMA_VERSION + 1))
+DEFAULT_BUSY_TIMEOUT_MS = 5000
 
 PRAGMAS = (
     "PRAGMA foreign_keys = ON;",
@@ -128,7 +164,10 @@ INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_positions_rules_ply ON positions(rules_version, ply);",
     "CREATE INDEX IF NOT EXISTS idx_decisions_game ON decisions(game_id);",
     "CREATE INDEX IF NOT EXISTS idx_decisions_position ON decisions(position_id);",
-    "CREATE INDEX IF NOT EXISTS idx_decisions_quality ON decisions(decision_quality, training_eligible);",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_decisions_quality "
+        "ON decisions(decision_quality, training_eligible);"
+    ),
 )
 
 SCHEMA_DDL = "\n".join(TABLE_DDL + INDEX_DDL)

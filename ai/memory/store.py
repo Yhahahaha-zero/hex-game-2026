@@ -1,0 +1,1061 @@
+# -*- coding: utf-8 -*-
+"""Persistent SQLite storage for the Hex experience-memory system.
+
+This module is deliberately independent from the UI, HexEngine and AI classes.
+Callers create typed records and explicitly send them to ExperienceStore. P0-B
+does not install any automatic game-flow collector.
+"""
+from __future__ import annotations
+
+from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import datetime
+import json
+import os
+from pathlib import Path
+import re
+import sqlite3
+from threading import RLock
+import tempfile
+
+from hex_board import BLUE, RED
+
+from ai.memory.schema import (
+    ACTOR_TYPES,
+    DECISION_QUALITIES,
+    DEFAULT_BUSY_TIMEOUT_MS,
+    FEATURE_VERSION,
+    GAME_STATUSES,
+    INDEX_DDL,
+    INTEGRITY_STATUSES,
+    MATCH_STATUSES,
+    MEMORY_INDEXES,
+    MEMORY_SCHEMA_VERSION,
+    MEMORY_TABLES,
+    RESULT_STATUSES,
+    RULES_VERSION,
+    RULE_STATUSES,
+    SOURCE_TYPES,
+    TABLE_COLUMNS,
+    TABLE_DDL,
+    memory_db_path,
+)
+
+
+_POSITION_ID_PATTERN = re.compile(r"^pos1-[0-9a-f]{32}$")
+_CANONICAL_ID_PATTERN = re.compile(r"^can1-[0-9a-f]{32}$")
+_DECISION_ID_PATTERN = re.compile(r"^dec1-[0-9a-f]{32}$")
+
+
+class MemoryStoreError(Exception):
+    """Base error for database-backed experience storage."""
+
+
+class MemoryValidationError(MemoryStoreError):
+    """Raised when a record does not satisfy the storage contract."""
+
+
+class MemoryConflictError(MemoryStoreError):
+    """Raised when a stable identifier is reused with different content."""
+
+
+class MemoryClosedError(MemoryStoreError):
+    """Raised when an operation requires an open store."""
+
+
+class MemoryDatabaseError(MemoryStoreError):
+    """Raised for recoverable or non-structural SQLite failures."""
+
+
+class MemorySchemaError(MemoryDatabaseError):
+    """Raised when the database schema version or layout is unsupported."""
+
+
+class MemoryIntegrityError(MemoryDatabaseError):
+    """Raised when SQLite reports malformed or inconsistent data."""
+
+
+@dataclass(frozen=True)
+class MatchRecord:
+    match_id: str
+    mode_name: str
+    red_team: str
+    blue_team: str
+    source_type: str
+    started_at: str
+    mode_key: int | None = None
+    schema_version: int = MEMORY_SCHEMA_VERSION
+    rules_version: int = RULES_VERSION
+    ended_at: str | None = None
+    status: str = "active"
+    record_id: str | None = None
+
+
+@dataclass(frozen=True)
+class GameRecord:
+    game_id: str
+    match_id: str
+    game_no: int
+    red_actor_type: str
+    blue_actor_type: str
+    started_at: str
+    red_actor_id: str | None = None
+    blue_actor_id: str | None = None
+    red_ai_name: str | None = None
+    blue_ai_name: str | None = None
+    red_ai_version: str | None = None
+    blue_ai_version: str | None = None
+    winner_color: int | None = None
+    termination_reason: str | None = None
+    status: str = "active"
+    ended_at: str | None = None
+
+
+@dataclass(frozen=True)
+class PositionRecord:
+    position_id: str
+    experience_key: str
+    canonical_key: str
+    board_json: str
+    current_color: int
+    ply: int
+    created_at: str
+    rules_version: int = RULES_VERSION
+    feature_version: int = FEATURE_VERSION
+    features_json: str | None = None
+
+
+@dataclass(frozen=True)
+class DecisionRecord:
+    decision_id: str
+    game_id: str
+    position_id: str
+    ply: int
+    actor_type: str
+    actor_color: int
+    created_at: str
+    actor_id: str | None = None
+    ai_name: str | None = None
+    ai_version: str | None = None
+    candidate_json: str | None = None
+    search_config_json: str | None = None
+    chosen_q: int | None = None
+    chosen_r: int | None = None
+    result: float | None = None
+    decision_quality: str = "unverified"
+    training_eligible: int = 0
+    integrity_status: str = "unknown"
+    rule_status: str = "unknown"
+    result_status: str = "unknown"
+    validation_reason: str | None = None
+    validator_version: str | None = None
+
+
+@dataclass(frozen=True)
+class StoreWriteResult:
+    match_changed: bool
+    game_changed: bool
+    position_changed: bool
+    decision_changed: bool
+
+    @property
+    def any_changed(self):
+        return any((
+            self.match_changed,
+            self.game_changed,
+            self.position_changed,
+            self.decision_changed,
+        ))
+
+
+@dataclass(frozen=True)
+class MemoryHealth:
+    database_path: str
+    schema_version: int
+    journal_mode: str
+    synchronous: int
+    foreign_keys: bool
+    busy_timeout_ms: int
+    integrity: str
+    foreign_key_violations: int
+    counts: dict[str, int]
+    size_bytes: int
+    sqlite_version: str
+
+def _require_text(value, field, *, optional=False):
+    if value is None and optional:
+        return
+    if not isinstance(value, str) or not value.strip():
+        raise MemoryValidationError(f"{field} must be a non-empty string")
+
+
+def _require_int(value, field, *, minimum=None, optional=False):
+    if value is None and optional:
+        return
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise MemoryValidationError(f"{field} must be an integer")
+    if minimum is not None and value < minimum:
+        raise MemoryValidationError(f"{field} must be >= {minimum}")
+
+
+def _require_enum(value, field, choices):
+    if value not in choices:
+        raise MemoryValidationError(f"{field} must be one of {choices!r}")
+
+
+def _require_color(value, field, *, optional=False):
+    if value is None and optional:
+        return
+    if value not in (RED, BLUE):
+        raise MemoryValidationError(f"{field} must be RED or BLUE")
+
+
+def _require_timestamp(value, field, *, optional=False):
+    if value is None and optional:
+        return
+    _require_text(value, field)
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise MemoryValidationError(f"{field} must be an ISO-8601 timestamp") from exc
+
+
+def _require_json_text(value, field, *, optional=False):
+    if value is None and optional:
+        return
+    _require_text(value, field)
+    try:
+        json.loads(value)
+    except (TypeError, ValueError) as exc:
+        raise MemoryValidationError(f"{field} must contain valid JSON") from exc
+
+
+def _validate_match(record):
+    if not isinstance(record, MatchRecord):
+        raise MemoryValidationError("record must be MatchRecord")
+    _require_text(record.match_id, "match_id")
+    _require_int(record.schema_version, "schema_version", minimum=1)
+    if record.schema_version != MEMORY_SCHEMA_VERSION:
+        raise MemoryValidationError("schema_version is not supported")
+    _require_int(record.rules_version, "rules_version", minimum=1)
+    _require_int(record.mode_key, "mode_key", minimum=0, optional=True)
+    _require_text(record.mode_name, "mode_name")
+    _require_text(record.red_team, "red_team")
+    _require_text(record.blue_team, "blue_team")
+    _require_enum(record.source_type, "source_type", SOURCE_TYPES)
+    _require_timestamp(record.started_at, "started_at")
+    _require_timestamp(record.ended_at, "ended_at", optional=True)
+    _require_enum(record.status, "status", MATCH_STATUSES)
+    _require_text(record.record_id, "record_id", optional=True)
+
+
+def _validate_game(record):
+    if not isinstance(record, GameRecord):
+        raise MemoryValidationError("record must be GameRecord")
+    _require_text(record.game_id, "game_id")
+    _require_text(record.match_id, "match_id")
+    _require_int(record.game_no, "game_no", minimum=1)
+    if record.game_no not in (1, 2):
+        raise MemoryValidationError("game_no must be 1 or 2")
+    _require_enum(record.red_actor_type, "red_actor_type", ACTOR_TYPES)
+    _require_enum(record.blue_actor_type, "blue_actor_type", ACTOR_TYPES)
+    _require_timestamp(record.started_at, "started_at")
+    for field in (
+        "red_actor_id", "blue_actor_id", "red_ai_name", "blue_ai_name",
+        "red_ai_version", "blue_ai_version", "termination_reason",
+    ):
+        _require_text(getattr(record, field), field, optional=True)
+    _require_color(record.winner_color, "winner_color", optional=True)
+    _require_enum(record.status, "status", GAME_STATUSES)
+    _require_timestamp(record.ended_at, "ended_at", optional=True)
+
+
+def _validate_position(record):
+    if not isinstance(record, PositionRecord):
+        raise MemoryValidationError("record must be PositionRecord")
+    _require_text(record.position_id, "position_id")
+    _require_text(record.experience_key, "experience_key")
+    _require_text(record.canonical_key, "canonical_key")
+    if not _POSITION_ID_PATTERN.fullmatch(record.position_id):
+        raise MemoryValidationError("position_id has an invalid format")
+    if record.experience_key != record.position_id:
+        raise MemoryValidationError("experience_key must equal position_id")
+    if not _CANONICAL_ID_PATTERN.fullmatch(record.canonical_key):
+        raise MemoryValidationError("canonical_key has an invalid format")
+    _require_int(record.rules_version, "rules_version", minimum=1)
+    _require_int(record.feature_version, "feature_version", minimum=1)
+    _require_json_text(record.board_json, "board_json")
+    _require_color(record.current_color, "current_color")
+    _require_int(record.ply, "ply", minimum=1)
+    _require_json_text(record.features_json, "features_json", optional=True)
+    _require_timestamp(record.created_at, "created_at")
+
+
+def _validate_decision(record):
+    if not isinstance(record, DecisionRecord):
+        raise MemoryValidationError("record must be DecisionRecord")
+    _require_text(record.decision_id, "decision_id")
+    _require_text(record.game_id, "game_id")
+    _require_text(record.position_id, "position_id")
+    if not _DECISION_ID_PATTERN.fullmatch(record.decision_id):
+        raise MemoryValidationError("decision_id has an invalid format")
+    if not _POSITION_ID_PATTERN.fullmatch(record.position_id):
+        raise MemoryValidationError("position_id has an invalid format")
+    _require_int(record.ply, "ply", minimum=1)
+    _require_enum(record.actor_type, "actor_type", ACTOR_TYPES)
+    _require_color(record.actor_color, "actor_color")
+    _require_timestamp(record.created_at, "created_at")
+    for field in ("actor_id", "ai_name", "ai_version", "validation_reason",
+                  "validator_version"):
+        _require_text(getattr(record, field), field, optional=True)
+    _require_json_text(record.candidate_json, "candidate_json", optional=True)
+    _require_json_text(record.search_config_json, "search_config_json", optional=True)
+    _require_int(record.chosen_q, "chosen_q", minimum=0, optional=True)
+    _require_int(record.chosen_r, "chosen_r", minimum=0, optional=True)
+    if (record.chosen_q is None) != (record.chosen_r is None):
+        raise MemoryValidationError("chosen_q and chosen_r must both be set or both be null")
+    if record.chosen_q is not None and record.chosen_q > 10:
+        raise MemoryValidationError("chosen_q must be <= 10")
+    if record.chosen_r is not None and record.chosen_r > 10:
+        raise MemoryValidationError("chosen_r must be <= 10")
+    if record.result is not None:
+        if isinstance(record.result, bool) or record.result not in (0.0, 0.5, 1.0):
+            raise MemoryValidationError("result must be 0.0, 0.5, 1.0 or null")
+    _require_enum(record.decision_quality, "decision_quality", DECISION_QUALITIES)
+    if record.training_eligible not in (0, 1):
+        raise MemoryValidationError("training_eligible must be 0 or 1")
+    _require_enum(record.integrity_status, "integrity_status", INTEGRITY_STATUSES)
+    _require_enum(record.rule_status, "rule_status", RULE_STATUSES)
+    _require_enum(record.result_status, "result_status", RESULT_STATUSES)
+
+
+def _validate_bundle(match, game, position, decision):
+    _validate_match(match)
+    _validate_game(game)
+    _validate_position(position)
+    _validate_decision(decision)
+    if game.match_id != match.match_id:
+        raise MemoryValidationError("game.match_id must match the match record")
+    if decision.game_id != game.game_id:
+        raise MemoryValidationError("decision.game_id must match the game record")
+    if decision.position_id != position.position_id:
+        raise MemoryValidationError("decision.position_id must match the position record")
+    if decision.ply != position.ply:
+        raise MemoryValidationError("decision.ply must match position.ply")
+    if decision.actor_color != position.current_color:
+        raise MemoryValidationError("decision.actor_color must match current_color")
+    expected_actor = (
+        game.red_actor_type if decision.actor_color == RED else game.blue_actor_type
+    )
+    if decision.actor_type != expected_actor:
+        raise MemoryValidationError("decision.actor_type does not match the game side")
+
+def _record_dict(record):
+    return {
+        "match_id": record.match_id,
+        "schema_version": record.schema_version,
+        "rules_version": record.rules_version,
+        "mode_key": record.mode_key,
+        "mode_name": record.mode_name,
+        "red_team": record.red_team,
+        "blue_team": record.blue_team,
+        "source_type": record.source_type,
+        "started_at": record.started_at,
+        "ended_at": record.ended_at,
+        "status": record.status,
+        "record_id": record.record_id,
+    }
+
+
+def _game_dict(record):
+    return {
+        "game_id": record.game_id,
+        "match_id": record.match_id,
+        "game_no": record.game_no,
+        "red_actor_type": record.red_actor_type,
+        "blue_actor_type": record.blue_actor_type,
+        "red_actor_id": record.red_actor_id,
+        "blue_actor_id": record.blue_actor_id,
+        "red_ai_name": record.red_ai_name,
+        "blue_ai_name": record.blue_ai_name,
+        "red_ai_version": record.red_ai_version,
+        "blue_ai_version": record.blue_ai_version,
+        "winner_color": record.winner_color,
+        "termination_reason": record.termination_reason,
+        "status": record.status,
+        "started_at": record.started_at,
+        "ended_at": record.ended_at,
+    }
+
+
+def _position_dict(record):
+    return {
+        "position_id": record.position_id,
+        "experience_key": record.experience_key,
+        "canonical_key": record.canonical_key,
+        "rules_version": record.rules_version,
+        "feature_version": record.feature_version,
+        "board_json": record.board_json,
+        "current_color": record.current_color,
+        "ply": record.ply,
+        "features_json": record.features_json,
+        "created_at": record.created_at,
+    }
+
+
+def _decision_dict(record):
+    return {
+        "decision_id": record.decision_id,
+        "game_id": record.game_id,
+        "position_id": record.position_id,
+        "ply": record.ply,
+        "actor_type": record.actor_type,
+        "actor_color": record.actor_color,
+        "actor_id": record.actor_id,
+        "ai_name": record.ai_name,
+        "ai_version": record.ai_version,
+        "candidate_json": record.candidate_json,
+        "search_config_json": record.search_config_json,
+        "chosen_q": record.chosen_q,
+        "chosen_r": record.chosen_r,
+        "result": record.result,
+        "decision_quality": record.decision_quality,
+        "training_eligible": int(record.training_eligible),
+        "integrity_status": record.integrity_status,
+        "rule_status": record.rule_status,
+        "result_status": record.result_status,
+        "validation_reason": record.validation_reason,
+        "validator_version": record.validator_version,
+        "created_at": record.created_at,
+    }
+
+
+def _coerce_database_path(path):
+    if str(path) == ":memory:":
+        return ":memory:"
+    return Path(path).expanduser().resolve()
+
+
+def _path_text(path):
+    return ":memory:" if path == ":memory:" else str(path)
+
+
+def _quick_check(connection):
+    rows = connection.execute("PRAGMA quick_check").fetchall()
+    values = [str(row[0]) for row in rows]
+    if values != ["ok"]:
+        raise MemoryIntegrityError("SQLite quick_check failed: " + "; ".join(values))
+    return "ok"
+
+
+def _foreign_key_violations(connection):
+    return len(connection.execute("PRAGMA foreign_key_check").fetchall())
+
+
+def _is_integrity_exception(exc):
+    message = str(exc).lower()
+    return any(token in message for token in (
+        "file is not a database",
+        "database disk image is malformed",
+        "database malformed",
+        "quick_check",
+    ))
+
+
+def _translate_database_error(exc):
+    if _is_integrity_exception(exc):
+        return MemoryIntegrityError(str(exc))
+    return MemoryDatabaseError(str(exc))
+
+
+def _quarantine_database(path):
+    path = Path(path)
+    stamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
+    quarantine = path.parent / f"{path.name}.corrupt-{stamp}"
+    counter = 1
+    while quarantine.exists():
+        quarantine = path.parent / f"{path.name}.corrupt-{stamp}-{counter}"
+        counter += 1
+    quarantine.mkdir(parents=False, exist_ok=False)
+    moved = 0
+    for source in (path, Path(str(path) + "-wal"), Path(str(path) + "-shm")):
+        if source.exists():
+            os.replace(source, quarantine / source.name)
+            moved += 1
+    if not moved:
+        quarantine.rmdir()
+        raise MemoryIntegrityError("No database files were available to quarantine")
+    return quarantine
+
+
+def recover_database(path, *, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS):
+    """Quarantine a structurally corrupt database and create a clean one.
+
+    Healthy databases and databases with an unsupported future schema are never
+    quarantined. The damaged file and any WAL/SHM sidecars are preserved under
+    a timestamped directory next to the original database.
+    """
+    normalized = _coerce_database_path(path)
+    if normalized == ":memory:":
+        raise MemoryValidationError("In-memory databases cannot be recovered")
+    probe = ExperienceStore(normalized, busy_timeout_ms=busy_timeout_ms)
+    try:
+        probe.open()
+    except MemoryIntegrityError:
+        probe.close()
+        quarantine = _quarantine_database(normalized)
+        rebuilt = ExperienceStore(normalized, busy_timeout_ms=busy_timeout_ms)
+        try:
+            rebuilt.open()
+        finally:
+            rebuilt.close()
+        return quarantine
+    else:
+        probe.close()
+        raise MemoryStoreError("Database passes integrity checks; recovery was not started")
+
+class ExperienceStore:
+    """Thread-safe SQLite store with explicit P0-B lifecycle management."""
+
+    def __init__(self, path=None, *, busy_timeout_ms=DEFAULT_BUSY_TIMEOUT_MS,
+                 recover_corrupt=False):
+        if isinstance(busy_timeout_ms, bool) or not isinstance(busy_timeout_ms, int):
+            raise MemoryValidationError("busy_timeout_ms must be an integer")
+        if busy_timeout_ms < 1:
+            raise MemoryValidationError("busy_timeout_ms must be positive")
+        self._database_path = _coerce_database_path(path if path is not None else memory_db_path())
+        self._busy_timeout_ms = busy_timeout_ms
+        self._recover_corrupt = bool(recover_corrupt)
+        self._connection = None
+        self._lock = RLock()
+        self._last_recovery_path = None
+
+    @property
+    def database_path(self):
+        return _path_text(self._database_path)
+
+    @property
+    def is_open(self):
+        return self._connection is not None
+
+    @property
+    def last_recovery_path(self):
+        return self._last_recovery_path
+
+    def open(self, *, recover_corrupt=None):
+        with self._lock:
+            if self._connection is not None:
+                return self
+            should_recover = (
+                self._recover_corrupt if recover_corrupt is None else bool(recover_corrupt)
+            )
+            try:
+                self._open_once()
+            except MemoryIntegrityError:
+                if not should_recover or self._database_path == ":memory:":
+                    raise
+                self._close_connection_unlocked()
+                quarantine = _quarantine_database(self._database_path)
+                self._open_once()
+                self._last_recovery_path = quarantine
+            return self
+
+    def _open_once(self):
+        if self._database_path != ":memory:":
+            self._database_path.parent.mkdir(parents=True, exist_ok=True)
+        target = _path_text(self._database_path)
+        try:
+            connection = sqlite3.connect(
+                target,
+                timeout=self._busy_timeout_ms / 1000.0,
+                isolation_level=None,
+                check_same_thread=False,
+            )
+        except sqlite3.Error as exc:
+            raise _translate_database_error(exc) from exc
+        connection.row_factory = sqlite3.Row
+        self._connection = connection
+        try:
+            self._configure_connection()
+            self._migrate_or_verify()
+            self._verify_schema()
+            _quick_check(connection)
+            if _foreign_key_violations(connection):
+                raise MemoryIntegrityError("Foreign-key violations detected")
+        except MemoryStoreError:
+            self._close_connection_unlocked()
+            raise
+        except sqlite3.DatabaseError as exc:
+            self._close_connection_unlocked()
+            raise _translate_database_error(exc) from exc
+
+    def _configure_connection(self):
+        connection = self._require_connection_unlocked()
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(f"PRAGMA busy_timeout = {self._busy_timeout_ms}")
+        connection.execute("PRAGMA temp_store = MEMORY")
+        if self._database_path != ":memory:":
+            journal_mode = str(
+                connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+            ).lower()
+            if journal_mode != "wal":
+                raise MemoryDatabaseError(
+                    f"Could not enable WAL journal mode: {journal_mode}"
+                )
+        connection.execute("PRAGMA synchronous = FULL")
+        if not bool(connection.execute("PRAGMA foreign_keys").fetchone()[0]):
+            raise MemoryDatabaseError("Could not enable SQLite foreign keys")
+
+    def _migrate_or_verify(self):
+        connection = self._require_connection_unlocked()
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version > MEMORY_SCHEMA_VERSION:
+            raise MemorySchemaError(
+                f"Database schema {version} is newer than supported {MEMORY_SCHEMA_VERSION}"
+            )
+        if version < MEMORY_SCHEMA_VERSION:
+            if version != 0:
+                raise MemorySchemaError(f"No migration path from schema version {version}")
+            self._apply_initial_schema()
+
+    def _apply_initial_schema(self):
+        connection = self._require_connection_unlocked()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in (*TABLE_DDL, *INDEX_DDL):
+                connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {MEMORY_SCHEMA_VERSION}")
+            connection.commit()
+        except sqlite3.DatabaseError as exc:
+            connection.rollback()
+            raise _translate_database_error(exc) from exc
+
+    def _verify_schema(self):
+        connection = self._require_connection_unlocked()
+        version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        if version != MEMORY_SCHEMA_VERSION:
+            raise MemorySchemaError(
+                f"Expected schema version {MEMORY_SCHEMA_VERSION}, found {version}"
+            )
+        tables = {
+            str(row[0]) for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        missing_tables = set(MEMORY_TABLES) - tables
+        if missing_tables:
+            raise MemorySchemaError(
+                "Missing tables: " + ", ".join(sorted(missing_tables))
+            )
+        for table in MEMORY_TABLES:
+            actual = tuple(
+                str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")
+            )
+            if actual != TABLE_COLUMNS[table]:
+                raise MemorySchemaError(f"Unexpected columns for table {table}")
+        indexes = {
+            str(row[0]) for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        missing_indexes = set(MEMORY_INDEXES) - indexes
+        if missing_indexes:
+            raise MemorySchemaError(
+                "Missing indexes: " + ", ".join(sorted(missing_indexes))
+            )
+
+    def _close_connection_unlocked(self):
+        connection = self._connection
+        self._connection = None
+        if connection is not None:
+            try:
+                connection.close()
+            except sqlite3.Error:
+                pass
+
+    def close(self):
+        with self._lock:
+            self._close_connection_unlocked()
+
+    def __enter__(self):
+        return self.open()
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.close()
+        return False
+
+    def _require_connection_unlocked(self):
+        if self._connection is None:
+            raise MemoryClosedError("ExperienceStore is not open")
+        return self._connection
+
+    @contextmanager
+    def _write_transaction(self):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+            try:
+                yield connection
+            except MemoryStoreError:
+                connection.rollback()
+                raise
+            except sqlite3.IntegrityError as exc:
+                connection.rollback()
+                raise MemoryConflictError(str(exc)) from exc
+            except sqlite3.DatabaseError as exc:
+                connection.rollback()
+                raise _translate_database_error(exc) from exc
+            except Exception:
+                connection.rollback()
+                raise
+            try:
+                connection.commit()
+            except sqlite3.DatabaseError as exc:
+                connection.rollback()
+                raise _translate_database_error(exc) from exc
+
+    def _select_one(self, connection, table, key_column, key_value):
+        row = connection.execute(
+            f"SELECT * FROM {table} WHERE {key_column} = ?",
+            (key_value,),
+        ).fetchone()
+        return None if row is None else dict(row)
+
+    def _insert_row(self, connection, table, values):
+        columns = TABLE_COLUMNS[table]
+        placeholders = ",".join("?" for _ in columns)
+        connection.execute(
+            f"INSERT INTO {table} ({','.join(columns)}) VALUES ({placeholders})",
+            tuple(values[column] for column in columns),
+        )
+
+    def _update_row(self, connection, table, key_column, key_value, updates):
+        if not updates:
+            return False
+        assignments = ", ".join(f"{column} = ?" for column in updates)
+        connection.execute(
+            f"UPDATE {table} SET {assignments} WHERE {key_column} = ?",
+            (*updates.values(), key_value),
+        )
+        return True
+
+    def _save_match_connection(self, connection, record):
+        new = _record_dict(record)
+        current = self._select_one(connection, "matches", "match_id", record.match_id)
+        if current is None:
+            self._insert_row(connection, "matches", new)
+            return True
+        immutable = (
+            "schema_version", "rules_version", "mode_key", "mode_name",
+            "red_team", "blue_team", "source_type", "started_at",
+        )
+        for field in immutable:
+            if current[field] != new[field]:
+                raise MemoryConflictError(f"match_id already exists with a different {field}")
+        if current["record_id"] and new["record_id"] and current["record_id"] != new["record_id"]:
+            raise MemoryConflictError("match_id already has a different record_id")
+        mutable = ("ended_at", "status", "record_id")
+        new["record_id"] = new["record_id"] or current["record_id"]
+        updates = {field: new[field] for field in mutable if current[field] != new[field]}
+        return self._update_row(connection, "matches", "match_id", record.match_id, updates)
+
+    def _save_game_connection(self, connection, record):
+        new = _game_dict(record)
+        current = self._select_one(connection, "games", "game_id", record.game_id)
+        if current is None:
+            if self._select_one(connection, "matches", "match_id", record.match_id) is None:
+                raise MemoryConflictError("game references a match that does not exist")
+            self._insert_row(connection, "games", new)
+            return True
+        immutable = (
+            "match_id", "game_no", "red_actor_type", "blue_actor_type",
+            "red_actor_id", "blue_actor_id", "red_ai_name", "blue_ai_name",
+            "red_ai_version", "blue_ai_version", "started_at",
+        )
+        for field in immutable:
+            if current[field] != new[field]:
+                raise MemoryConflictError(f"game_id already exists with a different {field}")
+        mutable = ("winner_color", "termination_reason", "status", "ended_at")
+        updates = {field: new[field] for field in mutable if current[field] != new[field]}
+        return self._update_row(connection, "games", "game_id", record.game_id, updates)
+
+    def _save_position_connection(self, connection, record):
+        new = _position_dict(record)
+        current = self._select_one(
+            connection, "positions", "position_id", record.position_id
+        )
+        by_experience = self._select_one(
+            connection, "positions", "experience_key", record.experience_key
+        )
+        if current is None and by_experience is not None:
+            raise MemoryConflictError("experience_key already belongs to another position_id")
+        if current is None:
+            self._insert_row(connection, "positions", new)
+            return True
+        core = (
+            "experience_key", "canonical_key", "rules_version", "feature_version",
+            "board_json", "current_color", "ply",
+        )
+        for field in core:
+            if current[field] != new[field]:
+                raise MemoryConflictError(
+                    f"position_id already exists with a different {field}"
+                )
+        updates = {}
+        if current["features_json"] is None and new["features_json"] is not None:
+            updates["features_json"] = new["features_json"]
+        elif (current["features_json"] is not None
+              and new["features_json"] is not None
+              and current["features_json"] != new["features_json"]):
+            raise MemoryConflictError("position_id already has different features_json")
+        return self._update_row(
+            connection, "positions", "position_id", record.position_id, updates
+        )
+
+    def _save_decision_connection(self, connection, record):
+        new = _decision_dict(record)
+        current = self._select_one(
+            connection, "decisions", "decision_id", record.decision_id
+        )
+        if current is None:
+            if self._select_one(connection, "games", "game_id", record.game_id) is None:
+                raise MemoryConflictError("decision references a game that does not exist")
+            if self._select_one(
+                connection, "positions", "position_id", record.position_id
+            ) is None:
+                raise MemoryConflictError("decision references a position that does not exist")
+            self._insert_row(connection, "decisions", new)
+            return True
+        immutable = (
+            "game_id", "position_id", "ply", "actor_type", "actor_color",
+            "actor_id", "ai_name", "ai_version", "candidate_json",
+            "search_config_json", "chosen_q", "chosen_r",
+        )
+        for field in immutable:
+            if current[field] != new[field]:
+                raise MemoryConflictError(
+                    f"decision_id already exists with a different {field}"
+                )
+        mutable = (
+            "result", "decision_quality", "training_eligible",
+            "integrity_status", "rule_status", "result_status",
+            "validation_reason", "validator_version",
+        )
+        updates = {field: new[field] for field in mutable if current[field] != new[field]}
+        return self._update_row(
+            connection, "decisions", "decision_id", record.decision_id, updates
+        )
+
+    def save_match(self, record):
+        _validate_match(record)
+        with self._write_transaction() as connection:
+            return self._save_match_connection(connection, record)
+
+    def save_game(self, record):
+        _validate_game(record)
+        with self._write_transaction() as connection:
+            return self._save_game_connection(connection, record)
+
+    def save_position(self, record):
+        _validate_position(record)
+        with self._write_transaction() as connection:
+            return self._save_position_connection(connection, record)
+
+    def save_decision(self, record):
+        _validate_decision(record)
+        with self._write_transaction() as connection:
+            return self._save_decision_connection(connection, record)
+
+    def save_decision_bundle(self, match, game, position, decision):
+        """Atomically persist one match/game/position/decision snapshot."""
+        _validate_bundle(match, game, position, decision)
+        with self._write_transaction() as connection:
+            match_changed = self._save_match_connection(connection, match)
+            game_changed = self._save_game_connection(connection, game)
+            position_changed = self._save_position_connection(connection, position)
+            decision_changed = self._save_decision_connection(connection, decision)
+        return StoreWriteResult(
+            match_changed=match_changed,
+            game_changed=game_changed,
+            position_changed=position_changed,
+            decision_changed=decision_changed,
+        )
+
+    def _get_row(self, table, key_column, key_value):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                return self._select_one(connection, table, key_column, key_value)
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+
+    def get_match(self, match_id):
+        return self._get_row("matches", "match_id", match_id)
+
+    def get_game(self, game_id):
+        return self._get_row("games", "game_id", game_id)
+
+    def get_position(self, position_id):
+        return self._get_row("positions", "position_id", position_id)
+
+    def get_decision(self, decision_id):
+        return self._get_row("decisions", "decision_id", decision_id)
+
+    def list_decisions(self, *, game_id=None, training_eligible=None, limit=500):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        if training_eligible is not None and training_eligible not in (0, 1):
+            raise MemoryValidationError("training_eligible must be 0 or 1")
+        clauses = []
+        parameters = []
+        if game_id is not None:
+            _require_text(game_id, "game_id")
+            clauses.append("game_id = ?")
+            parameters.append(game_id)
+        if training_eligible is not None:
+            clauses.append("training_eligible = ?")
+            parameters.append(int(training_eligible))
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        parameters.append(limit)
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM decisions"
+                    + where
+                    + " ORDER BY ply, created_at, decision_id LIMIT ?",
+                    tuple(parameters),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
+    def find_positions_by_canonical_key(self, canonical_key, *, limit=50):
+        _require_text(canonical_key, "canonical_key")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM positions WHERE canonical_key = ? "
+                    "ORDER BY created_at, position_id LIMIT ?",
+                    (canonical_key, limit),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
+    def counts(self):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                return {
+                    table: int(connection.execute(
+                        f"SELECT COUNT(*) FROM {table}"
+                    ).fetchone()[0])
+                    for table in MEMORY_TABLES
+                }
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+
+    def health_check(self):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                self._verify_schema()
+                integrity = _quick_check(connection)
+                violations = _foreign_key_violations(connection)
+                if violations:
+                    raise MemoryIntegrityError(
+                        f"Foreign-key violations detected: {violations}"
+                    )
+                schema_version = int(
+                    connection.execute("PRAGMA user_version").fetchone()[0]
+                )
+                journal_mode = str(
+                    connection.execute("PRAGMA journal_mode").fetchone()[0]
+                ).lower()
+                synchronous = int(
+                    connection.execute("PRAGMA synchronous").fetchone()[0]
+                )
+                foreign_keys = bool(
+                    connection.execute("PRAGMA foreign_keys").fetchone()[0]
+                )
+                busy_timeout_ms = int(
+                    connection.execute("PRAGMA busy_timeout").fetchone()[0]
+                )
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+            counts = {
+                table: int(connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0])
+                for table in MEMORY_TABLES
+            }
+        size_bytes = (
+            0 if self._database_path == ":memory:"
+            else self._database_path.stat().st_size
+        )
+        return MemoryHealth(
+            database_path=_path_text(self._database_path),
+            schema_version=schema_version,
+            journal_mode=journal_mode,
+            synchronous=synchronous,
+            foreign_keys=foreign_keys,
+            busy_timeout_ms=busy_timeout_ms,
+            integrity=integrity,
+            foreign_key_violations=violations,
+            counts=counts,
+            size_bytes=size_bytes,
+            sqlite_version=sqlite3.sqlite_version,
+        )
+
+    def backup_to(self, destination):
+        """Create a consistent standalone backup using SQLite's backup API."""
+        target_path = _coerce_database_path(destination)
+        if target_path == ":memory:":
+            raise MemoryValidationError("Backup destination must be a file path")
+        if (self._database_path != ":memory:"
+                and target_path == self._database_path):
+            raise MemoryValidationError("Backup destination must differ from the source")
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=target_path.parent,
+            prefix=f".{target_path.name}.",
+            suffix=".tmp",
+        )
+        os.close(descriptor)
+        temp_path = Path(temp_name)
+        try:
+            with self._lock:
+                source = self._require_connection_unlocked()
+                try:
+                    target = sqlite3.connect(temp_path)
+                    try:
+                        source.backup(target)
+                        target.execute("PRAGMA journal_mode = DELETE")
+                        check = target.execute("PRAGMA quick_check").fetchall()
+                        if [str(row[0]) for row in check] != ["ok"]:
+                            raise MemoryIntegrityError("Backup quick_check failed")
+                    finally:
+                        target.close()
+                except sqlite3.DatabaseError as exc:
+                    raise _translate_database_error(exc) from exc
+            with open(temp_path, "rb+") as stream:
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_path, target_path)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+        return target_path
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass

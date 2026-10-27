@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Stable contracts for the optional Hex experience-memory system."""
+"""Stable contracts and SQLite persistence for Hex experience memory."""
 
 from ai.memory.ids import (
     build_decision_id,
@@ -18,10 +18,41 @@ from ai.memory.canonical import (
     transform_color,
     transform_move,
 )
+from ai.memory.store import (
+    DecisionRecord,
+    ExperienceStore,
+    GameRecord,
+    MatchRecord,
+    MemoryClosedError,
+    MemoryConflictError,
+    MemoryDatabaseError,
+    MemoryHealth,
+    MemoryIntegrityError,
+    MemorySchemaError,
+    MemoryStoreError,
+    MemoryValidationError,
+    PositionRecord,
+    StoreWriteResult,
+    recover_database,
+)
 
 __all__ = [
     "BoardTransform",
     "CanonicalPosition",
+    "DecisionRecord",
+    "ExperienceStore",
+    "GameRecord",
+    "MatchRecord",
+    "MemoryClosedError",
+    "MemoryConflictError",
+    "MemoryDatabaseError",
+    "MemoryHealth",
+    "MemoryIntegrityError",
+    "MemorySchemaError",
+    "MemoryStoreError",
+    "MemoryValidationError",
+    "PositionRecord",
+    "StoreWriteResult",
     "TransformedPosition",
     "build_decision_id",
     "build_experience_key",
@@ -30,6 +61,7 @@ __all__ = [
     "canonicalize_position",
     "inverse_transform_move",
     "new_match_id",
+    "recover_database",
     "transform_board",
     "transform_color",
     "transform_move",
