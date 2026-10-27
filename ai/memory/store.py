@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -374,6 +375,37 @@ def _require_int(value, field, *, minimum=None, optional=False):
 def _require_enum(value, field, choices):
     if value not in choices:
         raise MemoryValidationError(f"{field} must be one of {choices!r}")
+
+
+def _require_number(value, field, *, minimum=None, maximum=None, optional=False):
+    if value is None and optional:
+        return
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise MemoryValidationError(f"{field} must be a number")
+    if not math.isfinite(float(value)):
+        raise MemoryValidationError(f"{field} must be finite")
+    if minimum is not None and float(value) < float(minimum):
+        raise MemoryValidationError(f"{field} must be >= {minimum}")
+    if maximum is not None and float(value) > float(maximum):
+        raise MemoryValidationError(f"{field} must be <= {maximum}")
+
+
+def _require_sha256(value, field, *, optional=False):
+    if value is None and optional:
+        return
+    _require_text(value, field)
+    if re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
+        raise MemoryValidationError(f"{field} must be a 64-character SHA256 hex digest")
+
+
+def _parse_json_text(value, field, expected_type=None, *, optional=False):
+    if value is None and optional:
+        return None
+    _require_json_text(value, field)
+    document = json.loads(value)
+    if expected_type is not None and not isinstance(document, expected_type):
+        raise MemoryValidationError(f"{field} must contain a JSON {expected_type.__name__}")
+    return document
 
 
 def _require_color(value, field, *, optional=False):
@@ -1334,10 +1366,11 @@ class ExperienceStore:
             raise MemoryValidationError("limit must be a positive integer")
         query = (
             "SELECT d.*, p.board_json, p.current_color, "
-            "p.ply AS position_ply, g.match_id, g.game_no "
+            "p.ply AS position_ply, g.match_id, g.game_no, m.source_type "
             "FROM decisions d "
             "JOIN positions p ON p.position_id = d.position_id "
             "JOIN games g ON g.game_id = d.game_id "
+            "JOIN matches m ON m.match_id = g.match_id "
             "WHERE d.training_eligible = 1 "
             "AND d.decision_quality = 'validated' "
             "AND d.actor_type = 'ai' "
@@ -1513,6 +1546,24 @@ class ExperienceStore:
                     )
             return False
 
+    def list_recent_decisions(self, *, limit=1000):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM decisions ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def list_recent_retrieval_outcomes(self, *, limit=1000):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM retrieval_outcomes ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def list_retrieval_outcomes(self, *, game_id=None, limit=10000):
         parameters = []
         where = ""
@@ -1669,10 +1720,15 @@ class ExperienceStore:
             "trust_model_id", "model_path", "sha256", "feature_version",
             "metrics_json", "status", "created_at",
         )
+        _require_text(record.trust_model_id, "trust_model_id")
+        _require_text(record.model_path, "model_path")
+        _require_sha256(record.sha256, "sha256")
         _require_enum(record.status, "status", (
             "candidate", "selected", "rejected", "rolled_back"
         ))
         _require_int(record.feature_version, "feature_version", minimum=1)
+        _parse_json_text(record.metrics_json, "metrics_json", dict, optional=True)
+        _require_timestamp(record.created_at, "created_at")
         return self._save_immutable_row(
             "trust_models", "trust_model_id", record.trust_model_id,
             _simple_record_values(record, fields),
@@ -1692,12 +1748,53 @@ class ExperienceStore:
             "candidate_id", "position_id", "decision_id", "priority",
             "reason_json", "selected", "dataset_id", "created_at",
         )
+        _require_text(record.candidate_id, "candidate_id")
+        _require_text(record.position_id, "position_id")
+        _require_text(record.decision_id, "decision_id")
+        _require_number(record.priority, "priority", minimum=0.0, maximum=1.0)
+        _parse_json_text(record.reason_json, "reason_json", list, optional=True)
         if record.selected not in (0, 1):
             raise MemoryValidationError("selected must be 0 or 1")
-        return self._save_immutable_row(
-            "active_learning_queue", "candidate_id", record.candidate_id,
-            _simple_record_values(record, fields),
-        )
+        _require_text(record.dataset_id, "dataset_id", optional=True)
+        _require_timestamp(record.created_at, "created_at")
+        values = _simple_record_values(record, fields)
+        with self._write_transaction() as connection:
+            decision = self._select_one(
+                connection, "decisions", "decision_id", record.decision_id
+            )
+            if decision is None:
+                raise MemoryValidationError("active-learning decision does not exist")
+            if decision["position_id"] != record.position_id:
+                raise MemoryValidationError(
+                    "active-learning position does not belong to the decision"
+                )
+            if record.dataset_id is not None:
+                dataset = self._select_one(
+                    connection, "dataset_versions", "dataset_id", record.dataset_id
+                )
+                if dataset is None:
+                    raise MemoryValidationError("active-learning dataset does not exist")
+            current = self._select_one(
+                connection, "active_learning_queue", "candidate_id", record.candidate_id
+            )
+            if current is None:
+                self._insert_row(connection, "active_learning_queue", values)
+                return True
+            immutable = ("position_id", "decision_id")
+            for key in immutable:
+                if current[key] != values[key]:
+                    raise MemoryConflictError(
+                        "candidate_id already exists with different references"
+                    )
+            updates = {
+                key: values[key]
+                for key in ("priority", "reason_json", "selected", "dataset_id")
+                if current[key] != values[key]
+            }
+            return self._update_row(
+                connection, "active_learning_queue", "candidate_id",
+                record.candidate_id, updates,
+            )
 
     def list_active_learning_candidates(self, *, selected=None, limit=1000):
         where = ""
@@ -1721,10 +1818,31 @@ class ExperienceStore:
             "opponent_id", "ai_name", "ai_version", "model_sha256", "elo",
             "metrics_json", "created_at",
         )
-        return self._save_immutable_row(
-            "opponent_profiles", "opponent_id", record.opponent_id,
-            _simple_record_values(record, fields),
+        _require_text(record.opponent_id, "opponent_id")
+        _require_text(record.ai_name, "ai_name")
+        _require_text(record.ai_version, "ai_version", optional=True)
+        _require_sha256(record.model_sha256, "model_sha256", optional=True)
+        _require_number(
+            record.elo, "elo", minimum=0.0, maximum=4000.0, optional=True
         )
+        _parse_json_text(record.metrics_json, "metrics_json", dict, optional=True)
+        _require_timestamp(record.created_at, "created_at")
+        values = _simple_record_values(record, fields)
+        with self._write_transaction() as connection:
+            current = self._select_one(
+                connection, "opponent_profiles", "opponent_id", record.opponent_id
+            )
+            if current is None:
+                self._insert_row(connection, "opponent_profiles", values)
+                return True
+            updates = {
+                key: values[key] for key in fields
+                if key != "opponent_id" and current[key] != values[key]
+            }
+            return self._update_row(
+                connection, "opponent_profiles", "opponent_id",
+                record.opponent_id, updates,
+            )
 
     def list_opponent_profiles(self, *, limit=100):
         with self._lock:
@@ -1740,6 +1858,14 @@ class ExperienceStore:
             "league_run_id", "candidate_sha256", "status", "metrics_json",
             "started_at", "finished_at",
         )
+        _require_text(record.league_run_id, "league_run_id")
+        _require_sha256(record.candidate_sha256, "candidate_sha256", optional=True)
+        _require_enum(record.status, "status", (
+            "running", "completed", "failed", "aborted"
+        ))
+        _parse_json_text(record.metrics_json, "metrics_json", dict, optional=True)
+        _require_timestamp(record.started_at, "started_at")
+        _require_timestamp(record.finished_at, "finished_at", optional=True)
         return self._save_immutable_row(
             "league_runs", "league_run_id", record.league_run_id,
             _simple_record_values(record, fields),
@@ -1747,10 +1873,13 @@ class ExperienceStore:
 
     def update_league_run(self, league_run_id, *, status, metrics_json=None,
                           finished_at=None):
+        _require_enum(status, "status", ("running", "completed", "failed", "aborted"))
         updates = {"status": status}
         if metrics_json is not None:
+            _parse_json_text(metrics_json, "metrics_json", dict)
             updates["metrics_json"] = metrics_json
         if finished_at is not None:
+            _require_timestamp(finished_at, "finished_at")
             updates["finished_at"] = finished_at
         with self._write_transaction() as connection:
             self._update_row(
@@ -1773,8 +1902,21 @@ class ExperienceStore:
             "snapshot_id", "window_start", "window_end", "metrics_json",
             "alerts_json", "created_at",
         )
-        _require_json_text(record.metrics_json, "metrics_json")
-        _require_json_text(record.alerts_json, "alerts_json")
+        _require_text(record.snapshot_id, "snapshot_id")
+        _require_timestamp(record.window_start, "window_start")
+        _require_timestamp(record.window_end, "window_end")
+        try:
+            start = datetime.fromisoformat(record.window_start.replace("Z", "+00:00"))
+            end = datetime.fromisoformat(record.window_end.replace("Z", "+00:00"))
+            if start > end:
+                raise MemoryValidationError("window_start must not be after window_end")
+        except TypeError as exc:
+            raise MemoryValidationError(
+                "window timestamps must use compatible timezone formats"
+            ) from exc
+        _parse_json_text(record.metrics_json, "metrics_json", dict)
+        _parse_json_text(record.alerts_json, "alerts_json", list)
+        _require_timestamp(record.created_at, "created_at")
         return self._save_immutable_row(
             "drift_snapshots", "snapshot_id", record.snapshot_id,
             _simple_record_values(record, fields),

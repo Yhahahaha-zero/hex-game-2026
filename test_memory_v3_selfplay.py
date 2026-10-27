@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """V3 explicit self-play generation tests."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -23,12 +24,18 @@ class MemorySelfPlayTest(unittest.TestCase):
             )
             self.assertEqual(len(results), 1)
             self.assertEqual(results[0].games, 2)
+            self.assertTrue(results[0].run_id)
+            self.assertEqual(results[0].as_dict()["run_id"], results[0].run_id)
             with ExperienceStore(db_path) as store:
                 match = store.list_matches()[0]
                 counts = store.counts()
+                decisions = store.list_decisions(limit=1000)
                 self.assertEqual(match["source_type"], "self_play")
                 self.assertEqual(counts["games"], 2)
                 self.assertGreater(counts["decisions"], 0)
+                for decision in decisions:
+                    search_config = json.loads(decision["search_config_json"])
+                    self.assertEqual(search_config["selfplay_run_id"], results[0].run_id)
             pipeline = MemoryLearningPipeline(
                 lambda: ExperienceStore(db_path).open(), mode="full"
             )

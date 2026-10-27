@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
-import uuid
 
 
 @dataclass(frozen=True)
@@ -43,8 +43,9 @@ def score_candidate(*, position_id, decision_id, trust_probability,
         + type_bonus
         + late_bonus
     )
+    identity = f"active1:{position_id}:{decision_id}".encode("utf-8")
     return ActiveLearningScore(
-        candidate_id=str(uuid.uuid4()),
+        candidate_id="act1-" + hashlib.sha256(identity).hexdigest()[:32],
         position_id=str(position_id),
         decision_id=str(decision_id),
         priority=round(min(1.0, priority), 6),

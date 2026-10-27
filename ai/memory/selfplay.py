@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import random
+import uuid
 
 from ai.memory.collector import CAPTURE_SHADOW, MemoryCaptureConfig, MemoryCollector
 from ai.memory.trace import ActorMetadata, DecisionTrace, ai_actor, snapshot_board
@@ -18,6 +19,7 @@ class SelfPlayMatchResult:
     winner_b: int
     moves: int
     games: int
+    run_id: str | None = None
 
     def as_dict(self):
         return {
@@ -26,6 +28,7 @@ class SelfPlayMatchResult:
             "winner_b": self.winner_b,
             "moves": self.moves,
             "games": self.games,
+            "run_id": self.run_id,
         }
 
 
@@ -54,7 +57,8 @@ def _actor(ai, side_name):
     )
 
 
-def play_memory_match(ai_a, ai_b, *, db_path, seed, source_type="self_play"):
+def play_memory_match(ai_a, ai_b, *, db_path, seed, source_type="self_play",
+                      run_id=None):
     """Play one two-game match and atomically record both complete games."""
     collector = MemoryCollector(
         MemoryCaptureConfig(
@@ -66,6 +70,7 @@ def play_memory_match(ai_a, ai_b, *, db_path, seed, source_type="self_play"):
         ),
         synchronous=True,
     )
+    run_id = str(run_id or uuid.uuid4())
     actor_a = _actor(ai_a, "AI-A")
     actor_b = _actor(ai_b, "AI-B")
     total_moves = 0
@@ -119,6 +124,7 @@ def play_memory_match(ai_a, ai_b, *, db_path, seed, source_type="self_play"):
                         "seed": int(seed),
                         "game_no": game_no,
                         "actor": side_map[color],
+                        "selfplay_run_id": run_id,
                     },
                     elapsed_ms=0.0,
                 )
@@ -149,6 +155,7 @@ def play_memory_match(ai_a, ai_b, *, db_path, seed, source_type="self_play"):
         winner_b=winner_b,
         moves=total_moves,
         games=2,
+        run_id=run_id,
     )
 def run_selfplay_series(factory_a, factory_b, *, db_path, matches, seed):
     """Create explicit two-game self-play matches with independent factories."""
@@ -156,6 +163,7 @@ def run_selfplay_series(factory_a, factory_b, *, db_path, matches, seed):
     if count < 1:
         raise ValueError("matches must be positive")
     results = []
+    run_id = str(uuid.uuid4())
     for index in range(count):
         ai_a = factory_a()
         ai_b = factory_b()
@@ -165,6 +173,7 @@ def run_selfplay_series(factory_a, factory_b, *, db_path, matches, seed):
                 ai_b,
                 db_path=db_path,
                 seed=int(seed) + index * 100003,
+                run_id=run_id,
             ))
         finally:
             for ai in (ai_a, ai_b):

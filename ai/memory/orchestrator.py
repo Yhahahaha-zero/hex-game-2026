@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from contextlib import contextmanager
+import json
+import os
 from pathlib import Path
 import uuid
 
@@ -28,14 +31,27 @@ def readiness(store, config):
     samples = store.query_training_samples(limit=1000000)
     datasets = store.list_dataset_versions(limit=1)
     latest_dataset_count = int(datasets[0]["sample_count"]) if datasets else 0
-    new_matches = len(matches)
+    latest_source_matches = int(datasets[0]["source_match_count"]) if datasets else 0
+    new_matches = max(0, len(matches) - latest_source_matches)
+    new_samples = max(0, len(samples) - latest_dataset_count)
+    drift_rows = store.list_drift_snapshots(limit=1)
+    drift_alerts = []
+    if drift_rows:
+        try:
+            drift_alerts = json.loads(drift_rows[0]["alerts_json"])
+        except (TypeError, ValueError):
+            drift_alerts = ["invalid_drift_snapshot"]
     return {
-        "matches": new_matches,
+        "matches": len(matches),
+        "new_matches_since_dataset": new_matches,
         "training_samples": len(samples),
-        "new_samples_since_dataset": max(0, len(samples) - latest_dataset_count),
+        "new_samples_since_dataset": new_samples,
+        "drift_alerts": drift_alerts,
         "ready": (
             new_matches >= config.minimum_new_matches
             and len(samples) >= config.minimum_training_samples
+            and new_samples > 0
+            and not drift_alerts
         ),
         "auto_train": config.auto_train,
         "auto_promote": False,
@@ -74,8 +90,38 @@ class LearningOrchestrator:
         )
         return summary
 
+    @contextmanager
+    def _cycle_lock(self):
+        lock_path = Path(self.db_path).with_suffix(".learning.lock")
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor = None
+        try:
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(descriptor, f"pid={os.getpid()}\n".encode("ascii"))
+            yield
+        except FileExistsError as exc:
+            raise RuntimeError("another learning cycle is already running") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+                try:
+                    lock_path.unlink()
+                except FileNotFoundError:
+                    pass
+
     def run(self, *, dataset_dir, candidate_output, parent_checkpoint="none",
             epochs=5, train=False):
+        with self._cycle_lock():
+            return self._run_locked(
+                dataset_dir=dataset_dir,
+                candidate_output=candidate_output,
+                parent_checkpoint=parent_checkpoint,
+                epochs=epochs,
+                train=train,
+            )
+
+    def _run_locked(self, *, dataset_dir, candidate_output, parent_checkpoint,
+                    epochs, train):
         state = self.status()
         if not state["ready"]:
             return {"status": "not_ready", **state}

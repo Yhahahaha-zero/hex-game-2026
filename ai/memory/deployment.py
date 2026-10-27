@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 
 
@@ -51,12 +52,13 @@ def build_deployment_manifest(*, models_dir, model_path, policy_path,
     policy_path = Path(policy_path).resolve()
     if not model_path.is_file() or not policy_path.is_file():
         raise FileNotFoundError("model and retrieval policy are required")
+    checkpoint = _load_checkpoint(model_path)
     return {
         "schema_version": DEPLOYMENT_SCHEMA_VERSION,
         "model_file": model_path.name,
         "model_sha256": file_sha256(model_path),
-        "model_version": "5.0.0",
-        "encoding_version": "3x11x11-v1",
+        "model_version": checkpoint["model_version"],
+        "encoding_version": checkpoint["encoding_version"],
         "memory_policy_file": policy_path.name,
         "memory_policy_sha256": file_sha256(policy_path),
         "feature_version": int(feature_version),
@@ -67,20 +69,34 @@ def build_deployment_manifest(*, models_dir, model_path, policy_path,
     }
 
 
+def _load_checkpoint(path):
+    try:
+        import torch
+        checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise DeploymentError(f"model checkpoint cannot be loaded: {exc}") from exc
+    if not isinstance(checkpoint, dict) or not checkpoint.get("model_state_dict"):
+        raise DeploymentError("deployment model is not a structured checkpoint")
+    if checkpoint.get("model_name") != "HexNetV5":
+        raise DeploymentError("deployment model_name is incompatible")
+    if checkpoint.get("model_version") != "5.0.0":
+        raise DeploymentError("deployment model_version is incompatible")
+    if checkpoint.get("encoding_version") != "3x11x11-v1":
+        raise DeploymentError("deployment encoding_version is incompatible")
+    return checkpoint
+
+
+def _validate_checkpoint(path):
+    _load_checkpoint(path)
+
+
 def validate_deployment_manifest(manifest_path, *, models_dir=None):
     manifest_path = Path(manifest_path).resolve()
     document = json.loads(manifest_path.read_text(encoding="utf-8"))
     if int(document.get("schema_version", 0)) != DEPLOYMENT_SCHEMA_VERSION:
         raise DeploymentError("unsupported deployment schema")
     root = Path(models_dir).resolve() if models_dir else manifest_path.parent
-    model_path = root / document["model_file"]
-    policy_path = root / document["memory_policy_file"]
-    if not model_path.is_file() or file_sha256(model_path) != document["model_sha256"]:
-        raise DeploymentError("model hash mismatch")
-    if not policy_path.is_file() or file_sha256(policy_path) != document["memory_policy_sha256"]:
-        raise DeploymentError("memory policy hash mismatch")
-    if document.get("feature_version") != 1 or document.get("rules_version") != 1:
-        raise DeploymentError("deployment version mismatch")
+    validate_deployment_manifest_from_document(document, root)
     return document
 
 
@@ -92,7 +108,18 @@ def activate_deployment(*, models_dir, manifest, apply=False):
         return {"applied": False, "manifest": manifest, "backup": None}
     backup = models_dir / "deployment_manifest.previous.json"
     if target.is_file():
-        backup.write_bytes(target.read_bytes())
+        descriptor, temp_name = tempfile.mkstemp(
+            dir=models_dir, prefix=".deployment.previous.", suffix=".tmp"
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(target.read_bytes())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temp_name, backup)
+        finally:
+            if Path(temp_name).exists():
+                Path(temp_name).unlink()
     _atomic_json(target, manifest)
     return {
         "applied": True,
@@ -102,16 +129,39 @@ def activate_deployment(*, models_dir, manifest, apply=False):
 
 
 def validate_deployment_manifest_from_document(document, models_dir):
+    if not isinstance(document, dict):
+        raise DeploymentError("deployment manifest must be a JSON object")
+    if int(document.get("schema_version", 0)) != DEPLOYMENT_SCHEMA_VERSION:
+        raise DeploymentError("unsupported deployment schema")
+    if document.get("feature_version") != 1 or document.get("rules_version") != 1:
+        raise DeploymentError("deployment version mismatch")
     for key in ("model_file", "memory_policy_file"):
         relative = Path(str(document.get(key, "")))
         if not relative.name or relative.is_absolute() or ".." in relative.parts:
+            raise DeploymentError(f"invalid {key}")
+    for key in ("model_sha256", "memory_policy_sha256"):
+        value = document.get(key)
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{64}", value) is None:
             raise DeploymentError(f"invalid {key}")
     model_path = Path(models_dir) / document["model_file"]
     policy_path = Path(models_dir) / document["memory_policy_file"]
     if not model_path.is_file() or file_sha256(model_path) != document["model_sha256"]:
         raise DeploymentError("model hash mismatch")
+    _validate_checkpoint(model_path)
     if not policy_path.is_file() or file_sha256(policy_path) != document["memory_policy_sha256"]:
         raise DeploymentError("memory policy hash mismatch")
+    selected_path = Path(models_dir) / "selected_model.json"
+    if selected_path.is_file():
+        try:
+            selected = json.loads(selected_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError) as exc:
+            raise DeploymentError("selected_model.json cannot be parsed") from exc
+        if not isinstance(selected, dict):
+            raise DeploymentError("selected_model.json must contain a JSON object")
+        if selected.get("model_file") != document.get("model_file"):
+            raise DeploymentError("deployment model does not match selected_model.json")
+        if selected.get("sha256") != document.get("model_sha256"):
+            raise DeploymentError("deployment model hash does not match selected_model.json")
     return True
 
 

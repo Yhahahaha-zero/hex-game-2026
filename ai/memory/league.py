@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
+from pathlib import Path
 import uuid
 
 
@@ -42,7 +44,7 @@ def update_elo(player_elo, opponent_elo, score, k_factor=24.0):
 def build_league_table(results, *, baseline_elo=1500.0):
     rows = []
     elo = baseline_elo
-    for result in results:
+    for result in sorted(results, key=lambda item: str(item["opponent_id"])):
         games = int(result.get("games_completed", 0))
         wins = int(result.get("ai_a_wins", 0))
         losses = int(result.get("ai_b_wins", 0))
@@ -63,7 +65,7 @@ def run_league(candidate_spec, opponents, *, games=200, repeats=1, seed=20261025
                output_dir="evaluation/memory/league"):
     from tools import benchmark_ai
     results = []
-    for opponent in opponents:
+    for opponent in sorted(opponents, key=lambda item: item.opponent_id):
         document, _paths = benchmark_ai.run_benchmark(
             candidate_spec,
             opponent.spec,
@@ -93,9 +95,19 @@ def register_league_run(store, document, *, status="completed"):
     from ai.memory.store import LeagueRunRecord, OpponentProfileRecord
     run_id = str(uuid.uuid4())
     now = datetime.now().astimezone().isoformat(timespec="seconds")
+    candidate_ref = str(document.get("candidate", ""))
+    candidate_file = candidate_ref
+    prefix, separator, suffix = candidate_ref.partition(":")
+    is_windows_drive = len(prefix) == 1 and prefix.isalpha()
+    if separator and suffix and not is_windows_drive:
+        candidate_file = suffix
+    candidate_path = Path(candidate_file).expanduser()
+    candidate_sha = None
+    if candidate_path.is_file():
+        candidate_sha = hashlib.sha256(candidate_path.read_bytes()).hexdigest()
     store.save_league_run(LeagueRunRecord(
         league_run_id=run_id,
-        candidate_sha256=None,
+        candidate_sha256=candidate_sha,
         status=status,
         metrics_json=json.dumps(document, ensure_ascii=False, sort_keys=True),
         started_at=now,
@@ -112,8 +124,5 @@ def register_league_run(store, document, *, status="completed"):
             metrics_json=json.dumps(row, ensure_ascii=False, sort_keys=True),
             created_at=now,
         )
-        try:
-            store.save_opponent_profile(opponent)
-        except Exception:
-            pass
+        store.save_opponent_profile(opponent)
     return run_id

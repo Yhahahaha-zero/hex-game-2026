@@ -37,7 +37,7 @@ def main(argv=None):
             scores.append(score_candidate(
                 position_id=event["query_position_id"],
                 decision_id=event["selected_memory_decision_id"],
-                trust_probability=float(event.get("selection_probability") or 0.5),
+                trust_probability=float(evidence.get("trust_probability", 0.5) or 0.5),
                 confidence=float(event.get("confidence") or 0.0),
                 support_count=int(evidence.get("support_count", 0) or 0),
                 conflict=bool(evidence.get("conflict", False)),

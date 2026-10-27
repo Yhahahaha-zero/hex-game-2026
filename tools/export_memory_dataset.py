@@ -26,6 +26,8 @@ def main(argv=None):
     parser.add_argument("--validation-ratio", type=float, default=0.15)
     parser.add_argument("--test-ratio", type=float, default=0.15)
     parser.add_argument("--policy-smoothing", type=float, default=0.05)
+    parser.add_argument("--active-only", action="store_true")
+    parser.add_argument("--include-source", action="append")
     args = parser.parse_args(argv)
     ratios = (args.train_ratio, args.validation_ratio, args.test_ratio)
     with ExperienceStore(args.db) as store:
@@ -35,6 +37,8 @@ def main(argv=None):
             seed=args.seed,
             split_ratios=ratios,
             policy_smoothing=args.policy_smoothing,
+            active_only=args.active_only,
+            allowed_sources=tuple(args.include_source or ()),
         )
         dataset_version = register_dataset_version(store, args.output)
     print(json.dumps({

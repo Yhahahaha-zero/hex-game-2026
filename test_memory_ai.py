@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """V1 memory shadow/assist wrapper and retrieval logging tests."""
 from dataclasses import replace
+import json
 import os
 import tempfile
 import unittest
@@ -109,6 +110,10 @@ class MemoryAssistedAITest(unittest.TestCase):
         self.assertEqual(move, (0, 0))
         self.assertEqual((events[0]["final_q"], events[0]["final_r"]), (0, 0))
         self.assertEqual(events[0]["applied"], 1)
+        self.assertEqual(events[0]["selection_probability"], 1.0)
+        evidence = json.loads(events[0]["evidence_json"])
+        self.assertIn("trust_probability", evidence)
+        self.assertIn("minimum_trust", evidence)
         self.assertEqual(ai.last_explanation["search_type"], "memory_assist")
 
     def test_low_trust_model_blocks_assist_override(self):
@@ -128,9 +133,12 @@ class MemoryAssistedAITest(unittest.TestCase):
         with ExperienceStore(self.db_path) as store:
             ai = MemoryAssistedAI(ScriptedAI(), settings=settings, store=store)
             move, _reason = ai.choose_move(HexBoard(), RED)
+            events = store.list_retrieval_events(limit=10)
         self.assertEqual(move, (5, 5))
         self.assertLess(ai.last_trust_probability, 0.5)
         self.assertEqual(ai.last_shadow_comparison.memory_move, (0, 0))
+        self.assertEqual(events[0]["selection_probability"], 0.0)
+        self.assertEqual(events[0]["applied"], 0)
 
     def test_forced_tactic_skips_memory(self):
         board = HexBoard()

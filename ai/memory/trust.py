@@ -18,6 +18,11 @@ TRUST_FEATURE_VERSION = 1
 RETRIEVAL_TYPES = ("exact", "canonical", "similar")
 
 
+def _sigmoid(value):
+    clipped = max(-40.0, min(40.0, float(value)))
+    return 1.0 / (1.0 + math.exp(-clipped))
+
+
 @dataclass(frozen=True)
 class MemoryTrustFeatures:
     similarity: float
@@ -52,33 +57,57 @@ class MemoryTrustModel:
     metrics: dict
     feature_version: int = TRUST_FEATURE_VERSION
     trained_at: str = ""
+    calibration_scale: float = 1.0
+    calibration_bias: float = 0.0
+    calibration_method: str = "identity"
+    calibration_samples: int = 0
 
     @classmethod
     def untrained(cls):
         size = len(MemoryTrustFeatures(0, 0, 0, 0, False, 1, "exact", False).vector())
         return cls(weights=[0.0] * size, bias=0.0, metrics={})
 
-    def predict(self, features):
+    def raw_logit(self, features):
         vector = features.vector()
         if len(vector) != len(self.weights):
             raise ValueError("trust feature size mismatch")
         value = float(np.dot(vector, np.asarray(self.weights)) + self.bias)
-        value = max(-40.0, min(40.0, value))
-        return 1.0 / (1.0 + math.exp(-value))
+        return max(-40.0, min(40.0, value))
+
+    def predict_raw(self, features):
+        return _sigmoid(self.raw_logit(features))
+
+    def predict(self, features):
+        raw_logit = self.raw_logit(features)
+        calibrated_logit = (
+            float(self.calibration_scale) * raw_logit
+            + float(self.calibration_bias)
+        )
+        return _sigmoid(calibrated_logit)
 
     @classmethod
-    def fit(cls, feature_rows, labels, *, epochs=400, learning_rate=0.08):
+    def fit(cls, feature_rows, labels, *, epochs=400, learning_rate=0.08,
+            sample_weights=None):
         if not feature_rows or len(feature_rows) != len(labels):
             raise ValueError("training features and labels are required")
         x = np.stack([row.vector() for row in feature_rows])
         y = np.asarray([1.0 if int(label) else 0.0 for label in labels])
+        weights_sample = np.asarray(
+            sample_weights if sample_weights is not None else [1.0] * len(y),
+            dtype=np.float64,
+        )
+        if (len(weights_sample) != len(y)
+                or not np.all(np.isfinite(weights_sample))
+                or np.any(weights_sample <= 0)):
+            raise ValueError("sample_weights must be finite, positive and match labels")
+        weights_sample = weights_sample / weights_sample.mean()
         model = cls.untrained()
         weights = np.asarray(model.weights, dtype=np.float64)
         bias = 0.0
         for _ in range(int(epochs)):
             logits = np.clip(x @ weights + bias, -40.0, 40.0)
             predictions = 1.0 / (1.0 + np.exp(-logits))
-            error = predictions - y
+            error = (predictions - y) * weights_sample
             weights -= learning_rate * (x.T @ error / len(y))
             bias -= learning_rate * float(error.mean())
         model.weights = weights.tolist()
@@ -88,8 +117,53 @@ class MemoryTrustModel:
         model.trained_at = datetime.now().astimezone().isoformat(timespec="seconds")
         return model
 
+    def calibrate(self, feature_rows, labels, *, epochs=300, learning_rate=0.05,
+                  sample_weights=None):
+        """Fit Platt scaling on a disjoint calibration set."""
+        if len(feature_rows) != len(labels):
+            raise ValueError("calibration features and labels must have equal length")
+        labels_array = np.asarray(
+            [1.0 if int(value) else 0.0 for value in labels], dtype=np.float64
+        )
+        self.calibration_samples = int(len(labels_array))
+        if len(labels_array) < 2 or len(set(labels_array.tolist())) < 2:
+            self.calibration_scale = 1.0
+            self.calibration_bias = 0.0
+            self.calibration_method = "identity_insufficient_classes"
+            return self
+        raw_logits = np.asarray(
+            [self.raw_logit(row) for row in feature_rows], dtype=np.float64
+        )
+        weights_sample = np.asarray(
+            sample_weights if sample_weights is not None else [1.0] * len(labels_array),
+            dtype=np.float64,
+        )
+        if (len(weights_sample) != len(labels_array)
+                or not np.all(np.isfinite(weights_sample))
+                or np.any(weights_sample <= 0)):
+            raise ValueError("calibration sample_weights must be finite, positive and match labels")
+        weights_sample = weights_sample / weights_sample.mean()
+        scale = 1.0
+        offset = 0.0
+        for _ in range(int(epochs)):
+            probabilities = 1.0 / (
+                1.0 + np.exp(-np.clip(scale * raw_logits + offset, -40.0, 40.0))
+            )
+            error = (probabilities - labels_array) * weights_sample
+            scale -= learning_rate * float(np.mean(error * raw_logits))
+            offset -= learning_rate * float(np.mean(error))
+            scale = max(0.05, min(10.0, scale))
+            offset = max(-20.0, min(20.0, offset))
+        self.calibration_scale = float(scale)
+        self.calibration_bias = float(offset)
+        self.calibration_method = "platt_scaling"
+        return self
+
     def predict_rows(self, feature_rows):
         return [self.predict(row) for row in feature_rows]
+
+    def predict_raw_rows(self, feature_rows):
+        return [self.predict_raw(row) for row in feature_rows]
 
     def as_dict(self):
         return asdict(self)
@@ -127,12 +201,12 @@ def evaluate_trust(probabilities, labels):
         avg_p = sum(item[0] for item in values) / len(values)
         avg_y = sum(item[1] for item in values) / len(values)
         ece += abs(avg_p - avg_y) * len(values) / len(values)
+    auc = auc_score(probabilities, labels)
     return {
         "samples": len(probabilities),
         "brier": round(brier, 6),
         "ece": round(ece, 6),
-        "auc": round(auc_score(probabilities, labels), 6)
-        if auc_score(probabilities, labels) is not None else None,
+        "auc": round(auc, 6) if auc is not None else None,
         "positive_rate": round(float(y.mean()), 6),
     }
 
@@ -160,12 +234,31 @@ def load_trust_model(path):
     document = json.loads(Path(path).read_text(encoding="utf-8"))
     if int(document.get("feature_version", 0)) != TRUST_FEATURE_VERSION:
         raise ValueError("unsupported trust feature version")
+    weights = [float(value) for value in document["weights"]]
+    if not weights or not all(math.isfinite(value) for value in weights):
+        raise ValueError("trust weights must be finite")
+    bias = float(document["bias"])
+    calibration_scale = float(document.get("calibration_scale", 1.0))
+    calibration_bias = float(document.get("calibration_bias", 0.0))
+    if not all(math.isfinite(value) for value in (
+        bias, calibration_scale, calibration_bias
+    )):
+        raise ValueError("trust parameters must be finite")
+    if calibration_scale <= 0.0:
+        raise ValueError("calibration_scale must be positive")
+    calibration_samples = int(document.get("calibration_samples", 0))
+    if calibration_samples < 0:
+        raise ValueError("calibration_samples must be non-negative")
     return MemoryTrustModel(
-        weights=[float(value) for value in document["weights"]],
-        bias=float(document["bias"]),
+        weights=weights,
+        bias=bias,
         metrics=dict(document.get("metrics", {})),
         feature_version=TRUST_FEATURE_VERSION,
         trained_at=str(document.get("trained_at", "")),
+        calibration_scale=calibration_scale,
+        calibration_bias=calibration_bias,
+        calibration_method=str(document.get("calibration_method", "identity")),
+        calibration_samples=calibration_samples,
     )
 
 

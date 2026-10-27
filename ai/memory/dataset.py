@@ -122,8 +122,23 @@ def _atomic_write_json(path, document):
 
 def build_memory_dataset(store, output_dir, *, seed=20261025,
                          split_ratios=DEFAULT_SPLIT_RATIOS,
-                         policy_smoothing=0.05):
+                         policy_smoothing=0.05, active_only=False,
+                         allowed_sources=None):
     rows = store.query_training_samples()
+    if isinstance(allowed_sources, str):
+        allowed_sources = (allowed_sources,)
+    elif allowed_sources is not None:
+        allowed_sources = tuple(allowed_sources)
+    if allowed_sources:
+        allowed = set(allowed_sources)
+        rows = [row for row in rows if row.get("source_type") in allowed]
+    if active_only:
+        active_ids = {
+            row["decision_id"] for row in store.list_active_learning_candidates(
+                selected=1, limit=1000000
+            )
+        }
+        rows = [row for row in rows if row["decision_id"] in active_ids]
     if not rows:
         raise ValueError("no validated training decisions are available")
     splits = split_match_ids(
@@ -228,6 +243,12 @@ def build_memory_dataset(store, output_dir, *, seed=20261025,
             "train": int(np.sum(split_codes == 0)),
             "validation": int(np.sum(split_codes == 1)),
             "test": int(np.sum(split_codes == 2)),
+        },
+        "active_only": bool(active_only),
+        "allowed_sources": list(allowed_sources or ()),
+        "source_counts": {
+            source: sum(1 for row in rows if row.get("source_type") == source)
+            for source in sorted({row.get("source_type") for row in rows})
         },
         "skipped_samples": skipped,
         "samples_file": samples_path.name,

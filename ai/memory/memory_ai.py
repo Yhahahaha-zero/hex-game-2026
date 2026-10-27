@@ -319,7 +319,10 @@ class MemoryAssistedAI:
             evidence_json=json_text(evidence),
             created_at=self._clock(),
             query_ply=query_ply,
-            selection_probability=trust_probability,
+            selection_probability=(
+                1.0 if advice and advice.available
+                and trust_probability >= self.settings.minimum_trust else 0.0
+            ),
             exploration_epsilon=0.0,
             policy_version=self.settings.policy_file or RETRIEVAL_VERSION,
         )
@@ -457,7 +460,11 @@ class MemoryAssistedAI:
                     shadow_move=shadow_move,
                     final_move=final_move,
                     elapsed_ms=elapsed_ms,
-                    evidence=evidence,
+                    evidence={
+                        **evidence,
+                        "trust_probability": trust_probability,
+                        "minimum_trust": self.settings.minimum_trust,
+                    },
                     trust_probability=trust_probability,
                 )
             tactic = base_reason

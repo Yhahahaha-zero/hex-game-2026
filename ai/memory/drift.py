@@ -16,6 +16,8 @@ class DriftThresholds:
     minimum_mean_reward: float = -0.10
     maximum_negative_rate: float = 0.65
     maximum_retrieval_failure_rate: float = 0.25
+    maximum_validation_drop: float = 0.10
+    maximum_reward_drop: float = 0.20
 
 
 def _now():
@@ -24,8 +26,8 @@ def _now():
 
 def build_drift_snapshot(store, *, thresholds=None, sample_limit=1000):
     thresholds = thresholds or DriftThresholds()
-    decisions = store.list_decisions(limit=sample_limit)
-    outcomes = store.list_retrieval_outcomes(limit=sample_limit)
+    decisions = store.list_recent_decisions(limit=sample_limit)
+    outcomes = store.list_recent_retrieval_outcomes(limit=sample_limit)
     validated = sum(
         1 for row in decisions if row["decision_quality"] == "validated"
     )
@@ -42,6 +44,23 @@ def build_drift_snapshot(store, *, thresholds=None, sample_limit=1000):
             and row["similarity"] is None) / len(outcomes)
         if outcomes else 0.0
     )
+    previous_rows = store.list_drift_snapshots(limit=1)
+    previous = None
+    if previous_rows:
+        try:
+            previous = json.loads(previous_rows[0]["metrics_json"])
+        except (TypeError, ValueError):
+            previous = None
+    baseline_delta = {}
+    if previous:
+        baseline_delta = {
+            "validation_rate": round(
+                validation_rate - float(previous.get("validation_rate", 0.0)), 6
+            ),
+            "mean_reward": round(
+                mean_reward - float(previous.get("mean_reward", 0.0)), 6
+            ),
+        }
     alerts = []
     if decisions and validation_rate < thresholds.minimum_validation_rate:
         alerts.append("validation_rate_low")
@@ -51,6 +70,12 @@ def build_drift_snapshot(store, *, thresholds=None, sample_limit=1000):
         alerts.append("memory_negative_rate_high")
     if outcomes and retrieval_failure_rate > thresholds.maximum_retrieval_failure_rate:
         alerts.append("retrieval_failure_rate_high")
+    if (previous and baseline_delta["validation_rate"]
+            < -thresholds.maximum_validation_drop):
+        alerts.append("validation_rate_drop")
+    if (previous and baseline_delta["mean_reward"]
+            < -thresholds.maximum_reward_drop):
+        alerts.append("memory_reward_drop")
     metrics = {
         "decisions": len(decisions),
         "validated": validated,
@@ -60,16 +85,17 @@ def build_drift_snapshot(store, *, thresholds=None, sample_limit=1000):
         "mean_reward": round(mean_reward, 6),
         "negative_rate": round(negative_rate, 6),
         "retrieval_failure_rate": round(retrieval_failure_rate, 6),
+        "baseline_delta": baseline_delta,
     }
     now = _now()
+    timestamps = [
+        str(row["created_at"]) for row in decisions + outcomes
+        if row.get("created_at")
+    ]
     record = DriftSnapshotRecord(
         snapshot_id=str(uuid.uuid4()),
-        window_start=(
-            decisions[0]["created_at"] if decisions else now
-        ),
-        window_end=(
-            decisions[-1]["created_at"] if decisions else now
-        ),
+        window_start=min(timestamps) if timestamps else now,
+        window_end=max(timestamps) if timestamps else now,
         metrics_json=json.dumps(metrics, ensure_ascii=False, sort_keys=True),
         alerts_json=json.dumps(alerts, ensure_ascii=False),
         created_at=now,
