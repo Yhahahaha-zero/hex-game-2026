@@ -14,6 +14,21 @@ from ai.memory.collector import CAPTURE_SHADOW, MemoryCaptureConfig, MemoryColle
 from ai.memory.store import ExperienceStore
 
 
+class RecordingPipeline:
+    enabled = True
+
+    def __init__(self):
+        self.submitted = []
+        self.closed = False
+
+    def submit(self, match_id):
+        self.submitted.append(match_id)
+        return True
+
+    def close(self, timeout=3.0):
+        self.closed = True
+
+
 class MemoryIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -75,6 +90,25 @@ class MemoryIntegrationTest(unittest.TestCase):
         finally:
             with self.assertRaises(SystemExit):
                 game.quit()
+
+    def test_completed_match_is_submitted_to_v3_pipeline(self):
+        import hex_game as hg
+
+        collector = self._collector()
+        pipeline = RecordingPipeline()
+        game = hg.HexGame(memory_collector=collector, memory_pipeline=pipeline)
+        try:
+            game.start_mode(GameMode.HUMAN_VS_HUMAN)
+            self._play_red_path(game)
+            game.advance_match()
+            self._play_red_path(game)
+            game.advance_match()
+            game.new_game()
+            self.assertEqual(len(pipeline.submitted), 1)
+        finally:
+            with self.assertRaises(SystemExit):
+                game.quit()
+        self.assertTrue(pipeline.closed)
 
     def test_active_match_is_not_persisted_on_restart(self):
         import hex_game as hg

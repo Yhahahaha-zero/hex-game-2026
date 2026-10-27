@@ -11,6 +11,7 @@ from ai.llm_advisor import LLMAdvisor
 from ai.llm_client import LLMDisabledError, create_llm_client
 from ai.llm_config import load_llm_config
 from ai.memory.collector import create_memory_collector_from_env
+from ai.memory.pipeline import create_memory_pipeline_from_env
 from ai.memory.trace import (
     ai_actor,
     ai_decision_trace,
@@ -82,7 +83,8 @@ class HexGame:
 
     """界面控制器：规则由 HexEngine 管理，AI 和绘制由独立模块完成。"""
 
-    def __init__(self, analysis_advisor_factory=None, memory_collector=None):
+    def __init__(self, analysis_advisor_factory=None, memory_collector=None,
+                 memory_pipeline=None):
         pygame.init()
         self.sound = SoundManager()
         self.window = pygame.display.set_mode(self._initial_window_size(), pygame.RESIZABLE)
@@ -128,6 +130,11 @@ class HexGame:
             else create_memory_collector_from_env()
         )
         self._pending_memory_trace = None
+        self.memory_pipeline = (
+            memory_pipeline
+            if memory_pipeline is not None
+            else create_memory_pipeline_from_env()
+        )
         self.timer = DualGameTimer()
         self.timer_history = []
         self.mode = None
@@ -703,8 +710,11 @@ class HexGame:
     def _finalize_memory_before_replacement(self):
         if self.mode is None:
             return
+        context = self._memory_context()
         if self.engine.state == STATE_MATCH_OVER:
-            self._memory_call("accept_match")
+            accepted = self._memory_call("accept_match")
+            if accepted and context.get("match_id"):
+                self.memory_pipeline.submit(context["match_id"])
         else:
             self._memory_call("abort_match", "match_restarted_before_finish")
 
@@ -734,10 +744,13 @@ class HexGame:
             )
             if self.engine.state == STATE_MATCH_OVER:
                 document = load_record(self.last_record_path)
-                self._memory_call(
+                context = self._memory_context()
+                accepted = self._memory_call(
                     "accept_match",
                     record_id=document.get("record_id"),
                 )
+                if accepted and context.get("match_id"):
+                    self.memory_pipeline.submit(context["match_id"])
             self.panel_message = f"记录已保存：{self.last_record_path.name}"
         except Exception as exc:
             self.panel_message = f"保存失败：{exc}"
@@ -1078,6 +1091,7 @@ class HexGame:
         self._finalize_memory_before_replacement()
         self._memory_call("flush", timeout=3.0)
         self._memory_call("close")
+        self.memory_pipeline.close(timeout=3.0)
         self._cancel_vision_worker(timeout=1.0)
         for worker in self._retired_vision_workers:
             worker.cancel()

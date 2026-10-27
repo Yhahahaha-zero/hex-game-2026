@@ -132,7 +132,7 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
         for name in (
             "README.md", "docs/MODEL_AND_CHECKPOINTS.md", "docs/HEX_NOTATION.md",
             "docs/RECORDS.md", "docs/REPORTS.md", "docs/MEMORY_INTERFACE.md",
-            "docs/MEMORY_V1.md", "docs/MEMORY_V2.md", "hex_game/.env.example",
+            "docs/MEMORY_V1.md", "docs/MEMORY_V2.md", "docs/MEMORY_V3.md", "hex_game/.env.example",
         ):
             _add(entries, workspace_root, workspace_root / name)
     elif profile == "archive":
@@ -146,7 +146,7 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
             "docs/MODEL_AND_CHECKPOINTS.md", "docs/AI_EVALUATION.md",
             "docs/P1_EVALUATION.md", "docs/TESTING.md",
             "docs/MEMORY_INTERFACE.md", "docs/MEMORY_V1.md",
-            "docs/MEMORY_V2.md",
+            "docs/MEMORY_V2.md", "docs/MEMORY_V3.md",
         ):
             _add(entries, workspace_root, workspace_root / name)
 

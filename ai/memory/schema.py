@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 
-MEMORY_SCHEMA_VERSION = 3
+MEMORY_SCHEMA_VERSION = 4
 RULES_VERSION = 1
 FEATURE_VERSION = 1
 COLLECTOR_VERSION = "1.0.0"
@@ -29,7 +29,8 @@ SOURCE_TYPES = ("human_vs_ai", "ai_vs_ai", "human_vs_human", "imported", "self_p
 CAPTURE_MODES = ("shadow",)
 RETRIEVAL_MODES = ("shadow", "assist", "exact", "canonical", "similar")
 MEMORY_TABLES = (
-    "matches", "games", "positions", "decisions", "retrieval_events"
+    "matches", "games", "positions", "decisions", "retrieval_events",
+    "retrieval_outcomes", "memory_jobs", "dataset_versions", "training_runs",
 )
 MEMORY_INDEXES = (
     "idx_positions_canonical",
@@ -41,6 +42,10 @@ MEMORY_INDEXES = (
     "idx_retrieval_query_game",
     "idx_retrieval_applied",
     "idx_retrieval_created",
+    "idx_outcomes_game",
+    "idx_jobs_status",
+    "idx_training_dataset",
+    "idx_retrieval_query_ply",
 )
 TABLE_COLUMNS = {
     "matches": (
@@ -66,7 +71,26 @@ TABLE_COLUMNS = {
         "selected_memory_decision_id", "similarity", "memory_q", "memory_r",
         "base_q", "base_r", "shadow_q", "shadow_r", "final_q", "final_r",
         "confidence", "applied", "feature_version", "retrieval_version",
-        "elapsed_ms", "evidence_json", "created_at",
+        "elapsed_ms", "evidence_json", "created_at", "query_ply",
+    ),
+    "retrieval_outcomes": (
+        "retrieval_event_id", "game_id", "decision_id", "applied",
+        "decision_result", "game_result", "retrieval_reward", "similarity",
+        "confidence", "retrieval_mode", "created_at",
+    ),
+    "memory_jobs": (
+        "job_id", "job_type", "target_id", "status", "attempts",
+        "last_error", "created_at", "started_at", "finished_at",
+    ),
+    "dataset_versions": (
+        "dataset_id", "dataset_dir", "manifest_sha256", "samples_sha256",
+        "feature_version", "encoding_version", "sample_count",
+        "split_counts_json", "source_match_count", "created_at",
+    ),
+    "training_runs": (
+        "training_run_id", "dataset_id", "parent_model_sha256",
+        "candidate_model_sha256", "status", "metrics_json",
+        "started_at", "finished_at",
     ),
     "decisions": (
         "decision_id", "game_id", "position_id", "ply", "actor_type",
@@ -206,11 +230,72 @@ TABLE_DDL = (
         elapsed_ms REAL NOT NULL,
         evidence_json TEXT,
         created_at TEXT NOT NULL,
+        query_ply INTEGER,
         FOREIGN KEY(selected_memory_decision_id)
             REFERENCES decisions(decision_id),
         CHECK(retrieval_mode IN (
             'shadow','assist','exact','canonical','similar'
         ))
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS retrieval_outcomes (
+        retrieval_event_id TEXT PRIMARY KEY,
+        game_id TEXT NOT NULL,
+        decision_id TEXT NOT NULL,
+        applied INTEGER NOT NULL CHECK(applied IN (0,1)),
+        decision_result REAL CHECK(decision_result IN (0.0,0.5,1.0)),
+        game_result REAL CHECK(game_result IN (0.0,0.5,1.0)),
+        retrieval_reward REAL CHECK(retrieval_reward IN (-1.0,0.0,1.0)),
+        similarity REAL,
+        confidence REAL,
+        retrieval_mode TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(retrieval_event_id) REFERENCES retrieval_events(retrieval_event_id),
+        FOREIGN KEY(decision_id) REFERENCES decisions(decision_id)
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS memory_jobs (
+        job_id TEXT PRIMARY KEY,
+        job_type TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT,
+        UNIQUE(job_type, target_id),
+        CHECK(status IN ('pending','running','completed','failed','cancelled'))
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS dataset_versions (
+        dataset_id TEXT PRIMARY KEY,
+        dataset_dir TEXT NOT NULL,
+        manifest_sha256 TEXT NOT NULL,
+        samples_sha256 TEXT NOT NULL,
+        feature_version INTEGER NOT NULL,
+        encoding_version TEXT NOT NULL,
+        sample_count INTEGER NOT NULL,
+        split_counts_json TEXT NOT NULL,
+        source_match_count INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS training_runs (
+        training_run_id TEXT PRIMARY KEY,
+        dataset_id TEXT NOT NULL,
+        parent_model_sha256 TEXT,
+        candidate_model_sha256 TEXT,
+        status TEXT NOT NULL,
+        metrics_json TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        FOREIGN KEY(dataset_id) REFERENCES dataset_versions(dataset_id),
+        CHECK(status IN ('running','completed','failed','cancelled'))
     );
     """,
 )
@@ -278,6 +363,85 @@ MIGRATION_DDL = {
             "ON retrieval_events(created_at);"
         ),
     ),
+    3: (
+        "ALTER TABLE retrieval_events ADD COLUMN query_ply INTEGER;",
+        """
+        CREATE TABLE IF NOT EXISTS retrieval_outcomes (
+            retrieval_event_id TEXT PRIMARY KEY,
+            game_id TEXT NOT NULL,
+            decision_id TEXT NOT NULL,
+            applied INTEGER NOT NULL CHECK(applied IN (0,1)),
+            decision_result REAL CHECK(decision_result IN (0.0,0.5,1.0)),
+            game_result REAL CHECK(game_result IN (0.0,0.5,1.0)),
+            retrieval_reward REAL CHECK(retrieval_reward IN (-1.0,0.0,1.0)),
+            similarity REAL,
+            confidence REAL,
+            retrieval_mode TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(retrieval_event_id) REFERENCES retrieval_events(retrieval_event_id),
+            FOREIGN KEY(decision_id) REFERENCES decisions(decision_id)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS memory_jobs (
+            job_id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            UNIQUE(job_type, target_id),
+            CHECK(status IN ('pending','running','completed','failed','cancelled'))
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS dataset_versions (
+            dataset_id TEXT PRIMARY KEY,
+            dataset_dir TEXT NOT NULL,
+            manifest_sha256 TEXT NOT NULL,
+            samples_sha256 TEXT NOT NULL,
+            feature_version INTEGER NOT NULL,
+            encoding_version TEXT NOT NULL,
+            sample_count INTEGER NOT NULL,
+            split_counts_json TEXT NOT NULL,
+            source_match_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS training_runs (
+            training_run_id TEXT PRIMARY KEY,
+            dataset_id TEXT NOT NULL,
+            parent_model_sha256 TEXT,
+            candidate_model_sha256 TEXT,
+            status TEXT NOT NULL,
+            metrics_json TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT,
+            FOREIGN KEY(dataset_id) REFERENCES dataset_versions(dataset_id),
+            CHECK(status IN ('running','completed','failed','cancelled'))
+        );
+        """,
+        (
+            "CREATE INDEX IF NOT EXISTS idx_outcomes_game "
+            "ON retrieval_outcomes(game_id);"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_jobs_status "
+            "ON memory_jobs(status, job_type);"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_training_dataset "
+            "ON training_runs(dataset_id, status);"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_retrieval_query_ply "
+            "ON retrieval_events(query_game_id, query_ply);"
+        ),
+    ),
 }
 
 INDEX_DDL = (
@@ -302,6 +466,22 @@ INDEX_DDL = (
         "ON retrieval_events(applied, retrieval_mode);"
     ),
     "CREATE INDEX IF NOT EXISTS idx_retrieval_created ON retrieval_events(created_at);",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_outcomes_game "
+        "ON retrieval_outcomes(game_id);"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_jobs_status "
+        "ON memory_jobs(status, job_type);"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_training_dataset "
+        "ON training_runs(dataset_id, status);"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_retrieval_query_ply "
+        "ON retrieval_events(query_game_id, query_ply);"
+    ),
 )
 
 SCHEMA_DDL = "\n".join(TABLE_DDL + INDEX_DDL)

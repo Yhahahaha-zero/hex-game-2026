@@ -2,7 +2,7 @@
 """Optional memory-retrieval wrapper around an existing Hex AI."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 import os
 from pathlib import Path
@@ -13,6 +13,7 @@ from ai.explanation import AIExplanation
 from ai.memory.collector import _env_setting, _read_env_file
 from ai.memory.features import FEATURE_VERSION
 from ai.memory.retrieval import MemoryRetriever
+from ai.memory.retrieval_policy import load_retrieval_policy
 from ai.memory.schema import RETRIEVAL_VERSION, memory_db_path
 from ai.memory.shadow import ShadowComparison
 from ai.memory.store import ExperienceStore, RetrievalEventRecord
@@ -57,6 +58,7 @@ class MemoryRetrievalSettings:
     alpha: float = 0.15
     ply_window: int = 6
     retrieval_types: tuple[str, ...] = ("exact", "canonical", "similar")
+    policy_file: str | None = None
 
     @classmethod
     def from_env(cls, *, env_file=None, environ=None):
@@ -95,6 +97,10 @@ class MemoryRetrievalSettings:
             ply_window=max(0, _safe_int(
                 _env_setting(file_values, env, "HEX_MEMORY_PLY_WINDOW", "6"), 6
             )),
+            policy_file=(
+                _env_setting(file_values, env, "HEX_MEMORY_POLICY_FILE", "")
+                or None
+            ),
             retrieval_types=(
                 tuple(
                     item.strip().lower()
@@ -118,6 +124,21 @@ class MemoryAssistedAI:
                  store_factory=None, clock=None):
         self.base_ai = base_ai
         self.settings = settings or MemoryRetrievalSettings.from_env()
+        self.policy_path = None
+        if self.settings.policy_file:
+            policy_path = Path(self.settings.policy_file).expanduser().resolve()
+            if policy_path.is_file():
+                policy = load_retrieval_policy(policy_path)
+                self.settings = replace(
+                    self.settings,
+                    top_k=policy.top_k,
+                    minimum_similarity=policy.minimum_similarity,
+                    minimum_support=policy.minimum_support,
+                    minimum_confidence=policy.minimum_confidence,
+                    alpha=policy.alpha,
+                    retrieval_types=policy.retrieval_types,
+                )
+                self.policy_path = policy_path
         if self.settings.mode not in RETRIEVAL_MODES:
             raise ValueError("invalid memory retrieval mode")
         self._store = store
@@ -223,8 +244,8 @@ class MemoryAssistedAI:
         scored.sort(key=lambda item: (-item[0], item[1]))
         return scored[0][1]
 
-    def _log_event(self, store, *, query_position_id, advice, base_move,
-                   shadow_move, final_move, elapsed_ms, evidence):
+    def _log_event(self, store, *, query_position_id, query_ply, advice,
+                   base_move, shadow_move, final_move, elapsed_ms, evidence):
         selected_decision_id = None
         similarity = None
         if advice and advice.recommended_move:
@@ -255,6 +276,7 @@ class MemoryAssistedAI:
             elapsed_ms=elapsed_ms,
             evidence_json=json_text(evidence),
             created_at=self._clock(),
+            query_ply=query_ply,
         )
         store.save_retrieval_event(event)
 
@@ -375,6 +397,7 @@ class MemoryAssistedAI:
                 self._log_event(
                     store,
                     query_position_id=advice.query_position_id if advice else "",
+                    query_ply=len(board.history) + 1,
                     advice=advice,
                     base_move=base_move,
                     shadow_move=shadow_move,

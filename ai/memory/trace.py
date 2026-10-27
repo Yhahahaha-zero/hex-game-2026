@@ -54,6 +54,8 @@ def board_state_json(board):
 def json_text(value):
     if value is None:
         return None
+    if hasattr(value, "as_dict") and callable(value.as_dict):
+        value = value.as_dict()
     return json.dumps(
         value,
         ensure_ascii=False,

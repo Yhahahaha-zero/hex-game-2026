@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from tools import export_memory_dataset
+from ai.memory.store import ExperienceStore
 from memory_test_support import collect_scripted_match, promote_match
 
 
@@ -24,6 +25,8 @@ class MemoryV2ToolsTest(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue((output / "samples.npz").is_file())
             self.assertTrue((output / "manifest.json").is_file())
+            with ExperienceStore(db_path) as store:
+                self.assertEqual(len(store.list_dataset_versions()), 1)
 
 
 if __name__ == "__main__":

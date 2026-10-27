@@ -14,6 +14,7 @@ import numpy as np
 import torch
 
 from ai.encode import encode_board
+from ai.memory.features import FEATURE_VERSION
 from ai.model_v5 import ENCODING_VERSION, POLICY_SIZE, get_legal_moves, move_to_index
 from hex_board import BLUE, EMPTY, RED, HexBoard
 
@@ -215,6 +216,7 @@ def build_memory_dataset(store, output_dir, *, seed=20261025,
         "schema_version": DATASET_SCHEMA_VERSION,
         "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "encoding_version": ENCODING_VERSION,
+        "feature_version": FEATURE_VERSION,
         "policy_target": "chosen_move_with_legal_smoothing",
         "policy_smoothing": float(policy_smoothing),
         "seed": int(seed),

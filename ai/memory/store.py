@@ -181,6 +181,61 @@ class RetrievalEventRecord:
     confidence: float | None = None
     applied: int = 0
     evidence_json: str | None = None
+    query_ply: int | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalOutcomeRecord:
+    retrieval_event_id: str
+    game_id: str
+    decision_id: str
+    applied: int
+    decision_result: float
+    game_result: float
+    retrieval_reward: float
+    retrieval_mode: str
+    created_at: str
+    similarity: float | None = None
+    confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class MemoryJobRecord:
+    job_id: str
+    job_type: str
+    target_id: str
+    status: str
+    created_at: str
+    attempts: int = 0
+    last_error: str | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+@dataclass(frozen=True)
+class DatasetVersionRecord:
+    dataset_id: str
+    dataset_dir: str
+    manifest_sha256: str
+    samples_sha256: str
+    feature_version: int
+    encoding_version: str
+    sample_count: int
+    split_counts_json: str
+    source_match_count: int
+    created_at: str
+
+
+@dataclass(frozen=True)
+class TrainingRunRecord:
+    training_run_id: str
+    dataset_id: str
+    status: str
+    started_at: str
+    parent_model_sha256: str | None = None
+    candidate_model_sha256: str | None = None
+    metrics_json: str | None = None
+    finished_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -425,6 +480,7 @@ def _validate_retrieval_event(record):
     _require_enum(record.retrieval_mode, "retrieval_mode", RETRIEVAL_MODES)
     _require_int(record.top_k, "top_k", minimum=1)
     _require_int(record.feature_version, "feature_version", minimum=1)
+    _require_int(record.query_ply, "query_ply", minimum=1, optional=True)
     if isinstance(record.elapsed_ms, bool) or not isinstance(record.elapsed_ms, (int, float)):
         raise MemoryValidationError("elapsed_ms must be numeric")
     if record.elapsed_ms < 0:
@@ -516,8 +572,13 @@ def _retrieval_event_dict(record):
         "elapsed_ms": float(record.elapsed_ms),
         "evidence_json": record.evidence_json,
         "created_at": record.created_at,
+        "query_ply": record.query_ply,
     }
     return value
+
+
+def _simple_record_values(record, fields):
+    return {field: getattr(record, field) for field in fields}
 
 
 def _record_dict(record):
@@ -1162,16 +1223,28 @@ class ExperienceStore:
                 raise _translate_database_error(exc) from exc
         return [dict(row) for row in rows]
 
-    def list_positions_missing_features(self, *, limit=1000):
+    def list_positions_missing_features(self, *, limit=1000, match_id=None):
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
             raise MemoryValidationError("limit must be a positive integer")
+        parameters = []
+        where = "features_json IS NULL"
+        if match_id is not None:
+            _require_text(match_id, "match_id")
+            where += (
+                " AND EXISTS ("
+                "SELECT 1 FROM decisions d JOIN games g ON g.game_id = d.game_id "
+                "WHERE d.position_id = positions.position_id AND g.match_id = ?)"
+            )
+            parameters.append(match_id)
+        parameters.append(limit)
         with self._lock:
             connection = self._require_connection_unlocked()
             try:
                 rows = connection.execute(
-                    "SELECT * FROM positions WHERE features_json IS NULL "
-                    "ORDER BY created_at, position_id LIMIT ?",
-                    (limit,),
+                    "SELECT * FROM positions WHERE "
+                    + where
+                    + " ORDER BY created_at, position_id LIMIT ?",
+                    tuple(parameters),
                 ).fetchall()
             except sqlite3.DatabaseError as exc:
                 raise _translate_database_error(exc) from exc
@@ -1339,6 +1412,179 @@ class ExperienceStore:
                 prepared,
             )
         return len(prepared)
+
+    def save_retrieval_outcome(self, record):
+        fields = (
+            "retrieval_event_id", "game_id", "decision_id", "applied",
+            "decision_result", "game_result", "retrieval_reward",
+            "similarity", "confidence", "retrieval_mode", "created_at",
+        )
+        values = _simple_record_values(record, fields)
+        if record.applied not in (0, 1):
+            raise MemoryValidationError("applied must be 0 or 1")
+        if record.decision_result not in (0.0, 0.5, 1.0):
+            raise MemoryValidationError("decision_result is invalid")
+        if record.game_result not in (0.0, 0.5, 1.0):
+            raise MemoryValidationError("game_result is invalid")
+        if record.retrieval_reward not in (-1.0, 0.0, 1.0):
+            raise MemoryValidationError("retrieval_reward is invalid")
+        _require_enum(record.retrieval_mode, "retrieval_mode", RETRIEVAL_MODES)
+        if record.similarity is not None and not 0.0 <= float(record.similarity) <= 1.0:
+            raise MemoryValidationError("similarity must be between 0 and 1")
+        if record.confidence is not None and not 0.0 <= float(record.confidence) <= 1.0:
+            raise MemoryValidationError("confidence must be between 0 and 1")
+        with self._write_transaction() as connection:
+            current = self._select_one(
+                connection, "retrieval_outcomes", "retrieval_event_id",
+                record.retrieval_event_id,
+            )
+            if current is None:
+                self._insert_row(connection, "retrieval_outcomes", values)
+                return True
+            for key, value in values.items():
+                if current[key] != value:
+                    raise MemoryConflictError(
+                        f"retrieval outcome already exists with a different {key}"
+                    )
+            return False
+
+    def list_retrieval_outcomes(self, *, game_id=None, limit=10000):
+        parameters = []
+        where = ""
+        if game_id is not None:
+            _require_text(game_id, "game_id")
+            where = " WHERE game_id = ?"
+            parameters.append(game_id)
+        parameters.append(limit)
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM retrieval_outcomes"
+                + where
+                + " ORDER BY created_at, retrieval_event_id LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_memory_job(self, record):
+        fields = (
+            "job_id", "job_type", "target_id", "status", "attempts",
+            "last_error", "created_at", "started_at", "finished_at",
+        )
+        _require_enum(record.status, "status", (
+            "pending", "running", "completed", "failed", "cancelled"
+        ))
+        values = _simple_record_values(record, fields)
+        with self._write_transaction() as connection:
+            existing = connection.execute(
+                "SELECT * FROM memory_jobs WHERE job_type = ? AND target_id = ?",
+                (record.job_type, record.target_id),
+            ).fetchone()
+            if existing is not None:
+                return dict(existing)
+            self._insert_row(connection, "memory_jobs", values)
+        return values
+
+    def update_memory_job(self, job_id, *, status, attempts=None,
+                          last_error=None, started_at=None, finished_at=None):
+        _require_enum(status, "status", (
+            "pending", "running", "completed", "failed", "cancelled"
+        ))
+        updates = {"status": status}
+        if attempts is not None:
+            updates["attempts"] = int(attempts)
+        if last_error is not None:
+            updates["last_error"] = last_error
+        if started_at is not None:
+            updates["started_at"] = started_at
+        if finished_at is not None:
+            updates["finished_at"] = finished_at
+        with self._write_transaction() as connection:
+            self._update_row(connection, "memory_jobs", "job_id", job_id, updates)
+        return True
+
+    def list_memory_jobs(self, *, status=None, limit=1000):
+        parameters = []
+        where = ""
+        if status is not None:
+            where = " WHERE status = ?"
+            parameters.append(status)
+        parameters.append(limit)
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM memory_jobs"
+                + where
+                + " ORDER BY created_at, job_id LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_dataset_version(self, record):
+        fields = (
+            "dataset_id", "dataset_dir", "manifest_sha256", "samples_sha256",
+            "feature_version", "encoding_version", "sample_count",
+            "split_counts_json", "source_match_count", "created_at",
+        )
+        values = _simple_record_values(record, fields)
+        with self._write_transaction() as connection:
+            if self._select_one(
+                connection, "dataset_versions", "dataset_id", record.dataset_id
+            ) is not None:
+                return False
+            self._insert_row(connection, "dataset_versions", values)
+        return True
+
+    def list_dataset_versions(self, *, limit=100):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM dataset_versions ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_training_run(self, record):
+        fields = (
+            "training_run_id", "dataset_id", "parent_model_sha256",
+            "candidate_model_sha256", "status", "metrics_json",
+            "started_at", "finished_at",
+        )
+        values = _simple_record_values(record, fields)
+        with self._write_transaction() as connection:
+            if self._select_one(
+                connection, "training_runs", "training_run_id",
+                record.training_run_id,
+            ) is not None:
+                return False
+            self._insert_row(connection, "training_runs", values)
+        return True
+
+    def update_training_run(self, training_run_id, *, status,
+                            candidate_model_sha256=None, metrics_json=None,
+                            finished_at=None):
+        updates = {"status": status}
+        if candidate_model_sha256 is not None:
+            updates["candidate_model_sha256"] = candidate_model_sha256
+        if metrics_json is not None:
+            updates["metrics_json"] = metrics_json
+        if finished_at is not None:
+            updates["finished_at"] = finished_at
+        with self._write_transaction() as connection:
+            self._update_row(
+                connection, "training_runs", "training_run_id",
+                training_run_id, updates,
+            )
+        return True
+
+    def list_training_runs(self, *, limit=100):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM training_runs ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def _get_row(self, table, key_column, key_value):
         with self._lock:

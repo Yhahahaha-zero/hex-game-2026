@@ -23,6 +23,9 @@ class PromotionGate:
     minimum_color_win_rate: float = 40.0
     maximum_errors: int = 0
     maximum_move_ms: float = 500.0
+    minimum_ci95_low: float | None = None
+    maximum_color_gap: float | None = None
+    maximum_p95_move_ms: float | None = None
 
 
 def file_sha256(path):
@@ -74,23 +77,27 @@ def evaluate_promotion_gate(benchmark_document, gate=None):
     gate = gate or PromotionGate()
     summary = benchmark_document.get("summary", benchmark_document)
     errors = int(summary.get("errors", summary.get("error_rate", 0)) or 0)
+    red_rate = float(summary.get("ai_a_red_win_rate", 0.0))
+    blue_rate = float(summary.get("ai_a_blue_win_rate", 0.0))
+    ci95_low = float(summary.get("ai_a_win_rate_ci95_low", 0.0))
+    p95_move_ms = float(summary.get("ai_a_p95_move_ms", float("inf")))
     checks = {
         "games": int(summary.get("games_completed", 0)) >= gate.minimum_games,
         "win_rate": float(summary.get("ai_a_win_rate", 0.0)) >= gate.minimum_win_rate,
-        "red_win_rate": (
-            float(summary.get("ai_a_red_win_rate", 0.0))
-            >= gate.minimum_color_win_rate
-        ),
-        "blue_win_rate": (
-            float(summary.get("ai_a_blue_win_rate", 0.0))
-            >= gate.minimum_color_win_rate
-        ),
+        "red_win_rate": red_rate >= gate.minimum_color_win_rate,
+        "blue_win_rate": blue_rate >= gate.minimum_color_win_rate,
         "errors": errors <= gate.maximum_errors,
         "latency": (
             float(summary.get("ai_a_max_move_ms", float("inf")))
             <= gate.maximum_move_ms
         ),
     }
+    if gate.minimum_ci95_low is not None:
+        checks["confidence_lower_bound"] = ci95_low >= gate.minimum_ci95_low
+    if gate.maximum_color_gap is not None:
+        checks["color_gap"] = abs(red_rate - blue_rate) <= gate.maximum_color_gap
+    if gate.maximum_p95_move_ms is not None:
+        checks["p95_latency"] = p95_move_ms <= gate.maximum_p95_move_ms
     return {
         "passed": all(checks.values()),
         "checks": checks,
@@ -100,6 +107,9 @@ def evaluate_promotion_gate(benchmark_document, gate=None):
             "minimum_color_win_rate": gate.minimum_color_win_rate,
             "maximum_errors": gate.maximum_errors,
             "maximum_move_ms": gate.maximum_move_ms,
+            "minimum_ci95_low": gate.minimum_ci95_low,
+            "maximum_color_gap": gate.maximum_color_gap,
+            "maximum_p95_move_ms": gate.maximum_p95_move_ms,
         },
         "observed": {
             "games_completed": int(summary.get("games_completed", 0)),
@@ -108,6 +118,9 @@ def evaluate_promotion_gate(benchmark_document, gate=None):
             "ai_a_blue_win_rate": float(summary.get("ai_a_blue_win_rate", 0.0)),
             "errors": errors,
             "ai_a_max_move_ms": float(summary.get("ai_a_max_move_ms", 0.0)),
+            "ai_a_win_rate_ci95_low": ci95_low,
+            "color_gap": round(abs(red_rate - blue_rate), 6),
+            "ai_a_p95_move_ms": p95_move_ms,
         },
     }
 

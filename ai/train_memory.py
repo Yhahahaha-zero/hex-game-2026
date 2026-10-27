@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 import sys
+import uuid
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -19,6 +20,10 @@ import torch.nn.functional as F
 from torch.optim import Adam
 
 from ai.memory.dataset import load_memory_dataset
+from ai.memory.dataset_registry import (
+    register_dataset_version,
+    register_training_run,
+)
 from ai.model_v5 import ENCODING_VERSION, MODEL_NAME, MODEL_VERSION, HexNetV5
 from ai.train_v5 import save_checkpoint, set_training_seed
 
@@ -101,7 +106,8 @@ def train_memory_model(*, dataset_dir, output_path=DEFAULT_OUTPUT,
                        parent_checkpoint=None, epochs=5, batch_size=32,
                        learning_rate=1e-4, policy_weight=1.0,
                        value_weight=0.5, seed=20261025, device="cpu",
-                       summary_path=DEFAULT_SUMMARY):
+                       summary_path=DEFAULT_SUMMARY, lineage_db=None,
+                       training_run_id=None):
     set_training_seed(seed)
     arrays, manifest = load_memory_dataset(dataset_dir)
     train_batch = _subset(arrays, 0)
@@ -185,8 +191,30 @@ def train_memory_model(*, dataset_dir, output_path=DEFAULT_OUTPUT,
         "history": history,
     }
     digest = save_checkpoint(model, Path(output_path), metadata)
+    training_run_id = training_run_id or str(uuid.uuid4())
+    dataset_id = str(manifest["samples_sha256"])
+    if lineage_db:
+        from ai.memory.store import ExperienceStore
+        with ExperienceStore(lineage_db) as store:
+            register_dataset_version(store, dataset_dir)
+            register_training_run(
+                store,
+                training_run_id=training_run_id,
+                dataset_id=dataset_id,
+                parent_model_sha256=parent_sha256,
+                candidate_model_sha256=digest,
+                status="completed",
+                metrics={
+                    "validation_loss": metadata["validation_loss"],
+                    "test_policy_loss": metadata["test_policy_loss"],
+                    "test_value_loss": metadata["test_value_loss"],
+                    "epochs": metadata["epochs"],
+                },
+            )
     summary = {
         "schema_version": 1,
+        "training_run_id": training_run_id,
+        "dataset_id": dataset_id,
         "model_name": MODEL_NAME,
         "model_version": MODEL_VERSION,
         "encoding_version": ENCODING_VERSION,
@@ -216,6 +244,7 @@ def main(argv=None):
     parser.add_argument("--value-weight", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=20261025)
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--lineage-db")
     args = parser.parse_args(argv)
     summary = train_memory_model(
         dataset_dir=args.dataset,
@@ -229,6 +258,7 @@ def main(argv=None):
         seed=args.seed,
         device=args.device,
         summary_path=args.summary,
+        lineage_db=args.lineage_db,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 0

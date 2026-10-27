@@ -44,11 +44,38 @@ from ai.memory.store import (
     MemoryValidationError,
     PositionRecord,
     RetrievalEventRecord,
+    RetrievalOutcomeRecord,
+    MemoryJobRecord,
+    DatasetVersionRecord,
+    TrainingRunRecord,
     StoreWriteResult,
     recover_database,
 )
 
 from ai.memory.features import FEATURE_VERSION, PositionFeatures, extract_features
+from ai.memory.dataset_registry import (
+    register_dataset_version,
+    register_training_run,
+)
+from ai.memory.outcomes import (
+    attribute_game_outcomes,
+    attribute_match_outcomes,
+    summarize_outcomes,
+)
+from ai.memory.pipeline import (
+    MemoryLearningPipeline,
+    MemoryPipelineWorker,
+    NullMemoryPipelineWorker,
+    create_memory_pipeline_from_env,
+)
+from ai.memory.retrieval_policy import (
+    POLICY_SCHEMA_VERSION,
+    RetrievalPolicy,
+    load_retrieval_policy,
+    save_retrieval_policy,
+)
+from ai.memory.selfplay import SelfPlayMatchResult, play_memory_match, run_selfplay_series
+from ai.memory.status import build_memory_status
 from ai.memory.dataset import (
     DATASET_SCHEMA_VERSION,
     DatasetExport,
@@ -79,6 +106,23 @@ from ai.memory.validator import (
 )
 
 __all__ = [
+    "register_dataset_version",
+    "register_training_run",
+    "attribute_game_outcomes",
+    "attribute_match_outcomes",
+    "summarize_outcomes",
+    "MemoryLearningPipeline",
+    "MemoryPipelineWorker",
+    "NullMemoryPipelineWorker",
+    "create_memory_pipeline_from_env",
+    "POLICY_SCHEMA_VERSION",
+    "RetrievalPolicy",
+    "load_retrieval_policy",
+    "save_retrieval_policy",
+    "SelfPlayMatchResult",
+    "play_memory_match",
+    "run_selfplay_series",
+    "build_memory_status",
     "DATASET_SCHEMA_VERSION",
     "DatasetExport",
     "build_memory_dataset",
@@ -130,6 +174,10 @@ __all__ = [
     "MemoryValidationError",
     "PositionRecord",
     "RetrievalEventRecord",
+    "RetrievalOutcomeRecord",
+    "MemoryJobRecord",
+    "DatasetVersionRecord",
+    "TrainingRunRecord",
     "StoreWriteResult",
     "TransformedPosition",
     "build_decision_id",

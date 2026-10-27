@@ -39,6 +39,12 @@ def main(argv=None):
         "--minimum-color-win-rate", type=float,
         default=float(os.environ.get("HEX_MEMORY_PROMOTION_MIN_COLOR_WIN_RATE", "40")),
     )
+    parser.add_argument("--minimum-ci95-low", type=float,
+        default=float(os.environ.get("HEX_MEMORY_PROMOTION_MIN_CI95_LOW", "48")))
+    parser.add_argument("--maximum-color-gap", type=float,
+        default=float(os.environ.get("HEX_MEMORY_PROMOTION_MAX_COLOR_GAP", "10")))
+    parser.add_argument("--maximum-p95-move-ms", type=float,
+        default=float(os.environ.get("HEX_MEMORY_PROMOTION_MAX_P95_MOVE_MS", "200")))
     parser.add_argument("--maximum-errors", type=int, default=0)
     parser.add_argument(
         "--maximum-move-ms", type=float,
@@ -65,6 +71,9 @@ def main(argv=None):
             minimum_color_win_rate=args.minimum_color_win_rate,
             maximum_errors=args.maximum_errors,
             maximum_move_ms=args.maximum_move_ms,
+            minimum_ci95_low=args.minimum_ci95_low,
+            maximum_color_gap=args.maximum_color_gap,
+            maximum_p95_move_ms=args.maximum_p95_move_ms,
         ),
         apply=args.apply,
     )

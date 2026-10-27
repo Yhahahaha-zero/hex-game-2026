@@ -12,6 +12,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from ai.memory.dataset import build_memory_dataset
+from ai.memory.dataset_registry import register_dataset_version
 from ai.memory.schema import memory_db_path
 from ai.memory.store import ExperienceStore
 
@@ -35,6 +36,7 @@ def main(argv=None):
             split_ratios=ratios,
             policy_smoothing=args.policy_smoothing,
         )
+        dataset_version = register_dataset_version(store, args.output)
     print(json.dumps({
         "output_dir": str(export.output_dir),
         "manifest": str(export.manifest_path),
@@ -43,6 +45,7 @@ def main(argv=None):
         "validation": export.validation_count,
         "test": export.test_count,
         "sha256": export.sha256,
+        "dataset_id": dataset_version["dataset_id"],
     }, ensure_ascii=False, indent=2))
     return 0
 

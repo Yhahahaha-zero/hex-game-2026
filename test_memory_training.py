@@ -32,6 +32,7 @@ class MemoryTrainingTest(unittest.TestCase):
                 seed=7,
                 device="cpu",
                 summary_path=summary_path,
+                lineage_db=db_path,
             )
             self.assertTrue(output.is_file())
             self.assertTrue(output.with_suffix(".pt.sha256").is_file())
@@ -42,6 +43,12 @@ class MemoryTrainingTest(unittest.TestCase):
             self.assertEqual(document["dataset_seed"], 7)
             self.assertEqual(document["dataset_split_counts"]["train"], 42)
             self.assertIsNotNone(document["dataset_manifest_sha256"])
+            with ExperienceStore(db_path) as store:
+                runs = store.list_training_runs()
+                datasets = store.list_dataset_versions()
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(len(datasets), 1)
+            self.assertEqual(runs[0]["candidate_model_sha256"], summary["sha256"])
 
 
 if __name__ == "__main__":
