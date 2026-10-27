@@ -24,6 +24,10 @@ class AIResult:
     search_stats: tuple = ()
     explanation: Optional[dict] = None
     cancelled: bool = False
+    ai_name: Optional[str] = None
+    ai_version: Optional[str] = None
+    model_sha256: Optional[str] = None
+    elapsed_ms: float = 0.0
 
     @property
     def ok(self):
@@ -40,6 +44,16 @@ def _snapshot_board(board):
     snapshot.grid = [row[:] for row in board.grid]
     snapshot.history = list(board.history)
     return snapshot
+
+
+def _ai_metadata(ai):
+    name = str(getattr(ai, "name", "") or type(ai).__name__)
+    version = str(getattr(ai, "version", "") or "")
+    model_sha256 = str(getattr(ai, "model_sha256", "") or "")
+    selection = getattr(ai, "model_selection", None)
+    if not model_sha256 and isinstance(selection, dict):
+        model_sha256 = str(selection.get("sha256", "") or "")
+    return name, version or None, model_sha256 or None
 
 
 def _default_ai_loader():
@@ -121,6 +135,7 @@ class AIWorker:
     def _cancel_result(self, selected_ai, init_error=None,
                        inference_error=None, fallback_error=None):
         self._update_progress(phase="cancelled", best_move=None)
+        ai_name, ai_version, model_sha256 = _ai_metadata(selected_ai)
         progress = self.progress
         self._result = AIResult(
             request_id=self.request_id,
@@ -133,6 +148,9 @@ class AIWorker:
             fallback_error=fallback_error,
             search_stats=tuple(progress.get("candidates", ())),
             cancelled=True,
+            ai_name=ai_name,
+            ai_version=ai_version,
+            model_sha256=model_sha256,
         )
 
     def _attach_cancel_event(self, selected_ai):
@@ -224,6 +242,7 @@ class AIWorker:
         )
         explanation_stats = tuple(explanation.get("candidates", ()))
         progress_stats = tuple(progress.get("candidates", ()))
+        ai_name, ai_version, model_sha256 = _ai_metadata(selected_ai)
         self._result = AIResult(
             request_id=self.request_id,
             color=self.color,
@@ -235,6 +254,10 @@ class AIWorker:
             fallback_error=fallback_error,
             search_stats=progress_stats or explanation_stats,
             explanation=explanation,
+            ai_name=ai_name,
+            ai_version=ai_version,
+            model_sha256=model_sha256,
+            elapsed_ms=elapsed_ms,
         )
 
     def _legal_move(self, move):

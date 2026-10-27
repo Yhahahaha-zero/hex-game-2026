@@ -4,11 +4,14 @@ import threading
 import unittest
 
 from ai.worker import AIResult, AIWorker
+from ai.memory.trace import ai_decision_trace
 from hex_board import BLUE, HexBoard, RED
 
 
 class StaticAI:
     name = "静态AI"
+    version = "1.2.3"
+    model_sha256 = "b" * 64
 
     def __init__(self, move=(5, 5), reason="测试"):
         self.move = move
@@ -81,6 +84,13 @@ class AIWorkerTest(unittest.TestCase):
         self.assertEqual(result.reason, "测试")
         self.assertEqual(result.explanation["selected_move"], (5, 5))
         self.assertEqual(result.explanation["tactic"], "测试")
+        self.assertEqual(result.ai_name, "静态AI")
+        self.assertEqual(result.ai_version, "1.2.3")
+        self.assertEqual(result.model_sha256, "b" * 64)
+        trace = ai_decision_trace(result)
+        self.assertEqual(trace.actor.ai_name, result.ai_name)
+        self.assertEqual(trace.actor.model_sha256, result.model_sha256)
+        self.assertEqual(trace.elapsed_ms, result.elapsed_ms)
         self.assertEqual(board.grid, before_grid)
         self.assertEqual(board.history, before_history)
 

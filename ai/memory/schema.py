@@ -10,9 +10,10 @@ import os
 from pathlib import Path
 
 
-MEMORY_SCHEMA_VERSION = 1
+MEMORY_SCHEMA_VERSION = 2
 RULES_VERSION = 1
 FEATURE_VERSION = 1
+COLLECTOR_VERSION = "1.0.0"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MEMORY_DB = PROJECT_ROOT.parent / "artifacts" / "memory" / "hex_experience.sqlite3"
 
@@ -24,6 +25,7 @@ INTEGRITY_STATUSES = ("valid", "invalid", "unknown")
 RULE_STATUSES = ("valid", "invalid", "unknown")
 RESULT_STATUSES = ("known", "unknown", "invalid")
 SOURCE_TYPES = ("human_vs_ai", "ai_vs_ai", "human_vs_human", "imported", "self_play")
+CAPTURE_MODES = ("shadow",)
 MEMORY_TABLES = ("matches", "games", "positions", "decisions")
 MEMORY_INDEXES = (
     "idx_positions_canonical",
@@ -36,13 +38,14 @@ TABLE_COLUMNS = {
     "matches": (
         "match_id", "schema_version", "rules_version", "mode_key", "mode_name",
         "red_team", "blue_team", "source_type", "started_at", "ended_at",
-        "status", "record_id",
+        "status", "record_id", "capture_mode", "collector_version",
     ),
     "games": (
         "game_id", "match_id", "game_no", "red_actor_type", "blue_actor_type",
         "red_actor_id", "blue_actor_id", "red_ai_name", "blue_ai_name",
         "red_ai_version", "blue_ai_version", "winner_color",
         "termination_reason", "status", "started_at", "ended_at",
+        "record_sha256",
     ),
     "positions": (
         "position_id", "experience_key", "canonical_key", "rules_version",
@@ -55,7 +58,7 @@ TABLE_COLUMNS = {
         "search_config_json", "chosen_q", "chosen_r", "result",
         "decision_quality", "training_eligible", "integrity_status",
         "rule_status", "result_status", "validation_reason",
-        "validator_version", "created_at",
+        "validator_version", "created_at", "model_sha256",
     ),
 }
 SUPPORTED_SCHEMA_VERSIONS = tuple(range(MEMORY_SCHEMA_VERSION + 1))
@@ -81,6 +84,9 @@ TABLE_DDL = (
         ended_at TEXT,
         status TEXT NOT NULL,
         record_id TEXT,
+        capture_mode TEXT NOT NULL DEFAULT 'shadow'
+            CHECK(capture_mode IN ('shadow')),
+        collector_version TEXT NOT NULL DEFAULT '1.0.0',
         CHECK(status IN ('active','completed','aborted','invalid'))
     );
     """,
@@ -102,6 +108,7 @@ TABLE_DDL = (
         status TEXT NOT NULL,
         started_at TEXT NOT NULL,
         ended_at TEXT,
+        record_sha256 TEXT,
         FOREIGN KEY(match_id) REFERENCES matches(match_id),
         UNIQUE(match_id, game_no),
         CHECK(red_actor_type IN ('ai','human')),
@@ -147,6 +154,7 @@ TABLE_DDL = (
         validation_reason TEXT,
         validator_version TEXT,
         created_at TEXT NOT NULL,
+        model_sha256 TEXT,
         FOREIGN KEY(game_id) REFERENCES games(game_id),
         FOREIGN KEY(position_id) REFERENCES positions(position_id),
         UNIQUE(game_id, ply, actor_type, actor_color),
@@ -158,6 +166,21 @@ TABLE_DDL = (
     );
     """,
 )
+
+MIGRATION_DDL = {
+    1: (
+        (
+            "ALTER TABLE matches ADD COLUMN capture_mode TEXT NOT NULL "
+            "DEFAULT 'shadow';"
+        ),
+        (
+            "ALTER TABLE matches ADD COLUMN collector_version TEXT NOT NULL "
+            "DEFAULT '1.0.0';"
+        ),
+        "ALTER TABLE games ADD COLUMN record_sha256 TEXT;",
+        "ALTER TABLE decisions ADD COLUMN model_sha256 TEXT;",
+    ),
+}
 
 INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_positions_canonical ON positions(canonical_key);",

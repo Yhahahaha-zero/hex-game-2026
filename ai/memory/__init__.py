@@ -18,11 +18,22 @@ from ai.memory.canonical import (
     transform_color,
     transform_move,
 )
+from ai.memory.trace import ActorMetadata, DecisionTrace
+from ai.memory.collector import (
+    MemoryCaptureConfig,
+    MemoryCollector,
+    MemoryCollectorStats,
+    NullMemoryCollector,
+    create_memory_collector_from_env,
+)
 from ai.memory.store import (
+    GameExperience,
     DecisionRecord,
     ExperienceStore,
     GameRecord,
+    MatchExperience,
     MatchRecord,
+    MatchWriteResult,
     MemoryClosedError,
     MemoryConflictError,
     MemoryDatabaseError,
@@ -37,12 +48,21 @@ from ai.memory.store import (
 )
 
 __all__ = [
+    "ActorMetadata",
+    "DecisionTrace",
     "BoardTransform",
     "CanonicalPosition",
     "DecisionRecord",
     "ExperienceStore",
     "GameRecord",
+    "GameExperience",
     "MatchRecord",
+    "MatchExperience",
+    "MatchWriteResult",
+    "MemoryCaptureConfig",
+    "MemoryCollector",
+    "MemoryCollectorStats",
+    "NullMemoryCollector",
     "MemoryClosedError",
     "MemoryConflictError",
     "MemoryDatabaseError",
@@ -59,6 +79,7 @@ __all__ = [
     "build_game_id",
     "build_memory_position_id",
     "canonicalize_position",
+    "create_memory_collector_from_env",
     "inverse_transform_move",
     "new_match_id",
     "recover_database",

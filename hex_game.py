@@ -10,6 +10,14 @@ from ai.board_observation import build_engine_observation
 from ai.llm_advisor import LLMAdvisor
 from ai.llm_client import LLMDisabledError, create_llm_client
 from ai.llm_config import load_llm_config
+from ai.memory.collector import create_memory_collector_from_env
+from ai.memory.trace import (
+    ai_actor,
+    ai_decision_trace,
+    human_actor,
+    human_decision_trace,
+    snapshot_board,
+)
 from game_mode import GameMode
 from game_records import (RecordValidationError, ReplaySession,
                           latest_record, load_record, save_match_record)
@@ -74,7 +82,7 @@ class HexGame:
 
     """界面控制器：规则由 HexEngine 管理，AI 和绘制由独立模块完成。"""
 
-    def __init__(self, analysis_advisor_factory=None):
+    def __init__(self, analysis_advisor_factory=None, memory_collector=None):
         pygame.init()
         self.sound = SoundManager()
         self.window = pygame.display.set_mode(self._initial_window_size(), pygame.RESIZABLE)
@@ -114,6 +122,12 @@ class HexGame:
         self.analysis_elapsed_ms = None
         self.analysis_position_id = ""
         self.analysis_configured = self._read_analysis_configured()
+        self.memory_collector = (
+            memory_collector
+            if memory_collector is not None
+            else create_memory_collector_from_env()
+        )
+        self._pending_memory_trace = None
         self.timer = DualGameTimer()
         self.timer_history = []
         self.mode = None
@@ -556,8 +570,10 @@ class HexGame:
         self.ai_worker = None
         self.last_search_stats = ()
         self.last_ai_explanation = None
+        self._pending_memory_trace = None
 
     def reset_match(self, show_intro=False):
+        self._finalize_memory_before_replacement()
         self.engine = HexEngine("玩家1", "玩家2")
         self._reset_transient_state()
         self._sync_engine()
@@ -565,17 +581,21 @@ class HexGame:
         self.state = S_START if show_intro else S_PLAY
         self.intro_at = pygame.time.get_ticks()
         if self.state == S_PLAY:
+            self._start_memory_match()
             self.timer.start(self.engine.current_color)
 
     def new_game(self):
+        self._finalize_memory_before_replacement()
         self.engine.start_match()
         self._reset_transient_state()
         self._sync_engine()
         self.timer.reset()
+        self._start_memory_match()
         self.timer.start(self.engine.current_color)
         self.state = S_PLAY
 
     def start_mode(self, mode):
+        self._finalize_memory_before_replacement()
         self.mode = GameMode(mode)
         self.human = self.mode.human_player
         self.ai = None
@@ -585,6 +605,7 @@ class HexGame:
         self._reset_transient_state()
         self._sync_engine()
         self.timer.reset()
+        self._start_memory_match()
         self.timer.start(self.engine.current_color)
         self.state = S_PLAY
         self.sound.play("click")
@@ -617,6 +638,70 @@ class HexGame:
             return False
         return self.player_of(self.engine.current_color) == self.human
 
+    def _memory_source_type(self):
+        if self.mode == GameMode.HUMAN_VS_HUMAN:
+            return "human_vs_human"
+        if self.mode == GameMode.AI_VS_AI:
+            return "ai_vs_ai"
+        return "human_vs_ai"
+
+    def _memory_actor_types(self):
+        return {
+            RED: "human" if self.is_human_color(RED) else "ai",
+            BLUE: "human" if self.is_human_color(BLUE) else "ai",
+        }
+
+    def _memory_actor_metadata(self):
+        actors = {}
+        for color in (RED, BLUE):
+            if self.is_human_color(color):
+                actors[color] = human_actor(self.player_of(color))
+            elif self.ai is not None:
+                actors[color] = ai_actor(self.ai)
+        return actors
+
+    def _memory_call(self, method, *args, **kwargs):
+        try:
+            return getattr(self.memory_collector, method)(*args, **kwargs)
+        except Exception as exc:
+            print(f"[MEMORY] {type(exc).__name__}: {exc}")
+            return None
+
+    def _start_memory_match(self):
+        if self.mode is None:
+            return None
+        sides = self.engine.sides_for_game(1)
+        return self._memory_call(
+            "start_match",
+            mode_key=int(self.mode),
+            mode_name=self.mode.label,
+            red_team=sides[RED],
+            blue_team=sides[BLUE],
+            source_type=self._memory_source_type(),
+            actor_types=self._memory_actor_types(),
+            actor_metadata=self._memory_actor_metadata(),
+        )
+
+    def _start_memory_game(self):
+        if self.mode is None:
+            return None
+        sides = self.engine.sides_for_game(self.engine.game_no)
+        return self._memory_call(
+            "begin_game",
+            self.engine.game_no,
+            sides=sides,
+            actor_types=self._memory_actor_types(),
+            actor_metadata=self._memory_actor_metadata(),
+        )
+
+    def _finalize_memory_before_replacement(self):
+        if self.mode is None:
+            return
+        if self.engine.state == STATE_MATCH_OVER:
+            self._memory_call("accept_match")
+        else:
+            self._memory_call("abort_match", "match_restarted_before_finish")
+
     def advance_match(self):
         if self.engine.state != STATE_GAME_OVER:
             return
@@ -627,10 +712,12 @@ class HexGame:
         if self.engine.state == STATE_MATCH_OVER:
             self.state = S_MATCH_END
         else:
+            self._start_memory_game()
             self.timer.start(self.engine.current_color)
             self.state = S_PLAY
 
-    # ---------- 记录和复盘 ----------
+    # ---------- records and replay ----------
+
     def save_record(self):
         try:
             self.last_record_path = save_match_record(
@@ -639,6 +726,12 @@ class HexGame:
                 self._player_labels(),
                 self.timer,
             )
+            if self.engine.state == STATE_MATCH_OVER:
+                document = load_record(self.last_record_path)
+                self._memory_call(
+                    "accept_match",
+                    record_id=document.get("record_id"),
+                )
             self.panel_message = f"记录已保存：{self.last_record_path.name}"
         except Exception as exc:
             self.panel_message = f"保存失败：{exc}"
@@ -795,7 +888,7 @@ class HexGame:
             self.panel_message = "当前状态不能悔棋"
             return False
         if not self.engine.can_undo():
-            self.panel_message = "当前没有可以悔棋的棋步"
+            self.panel_message = "当前没有可以悔棋的棋子"
             return False
 
         self._cancel_ai_request()
@@ -816,6 +909,8 @@ class HexGame:
         if undone <= 0:
             self.panel_message = "悔棋失败"
             return False
+        self._memory_call("undo_moves", undone)
+        self._pending_memory_trace = None
         self._invalidate_analysis(mark_stale=True)
 
         del self.timer_history[-undone:]
@@ -830,7 +925,7 @@ class HexGame:
         self.paused = False
         self.timer.stop()
         self.timer.start(self.engine.current_color)
-        self.panel_message = f"已悔棋 {undone} 手"
+        self.panel_message = f"已悔棋 {undone} 步"
         self.sound.play("click")
         return True
 
@@ -838,11 +933,24 @@ class HexGame:
         if self.engine.state != STATE_PLAYING:
             return False
         color = self.engine.current_color
+        board_before = snapshot_board(self.board)
+        trace = self._pending_memory_trace
+        if (trace is None or trace.color != color or trace.move != (q, r)):
+            if self.is_human_color(color):
+                trace = human_decision_trace(
+                    (q, r), color, reason, self.player_of(color)
+                )
+            else:
+                trace = None
         timer_snapshot = self.timer.savepoint()
         try:
             won = self.engine.play_move(q, r, reason=reason)
         except IllegalMoveError:
+            self._pending_memory_trace = None
             return False
+        self._pending_memory_trace = None
+        if trace is not None:
+            self._memory_call("record_move", board_before, trace)
         self.timer_history.append(timer_snapshot)
         self._invalidate_analysis(mark_stale=True)
         now = pygame.time.get_ticks()
@@ -853,6 +961,15 @@ class HexGame:
         self.sound.play("tap")
         self._sync_engine()
         if won or self.engine.state == STATE_GAME_OVER:
+            result_reason = (
+                self.engine.results[-1].get("reason", "connect")
+                if self.engine.results else "connect"
+            )
+            self._memory_call(
+                "mark_game_over",
+                self.engine.winner_color,
+                result_reason,
+            )
             self.timer.stop()
             self.state = S_WIN
             self.win_at = now
@@ -882,16 +999,23 @@ class HexGame:
             print(f"[AI] {result.init_error}")
             self.ai_status_message = "模型不可用，已回退基础 AI"
         if result.inference_error:
-            print(f"[AI] 推理失败: {result.inference_error}")
+            print(f"[AI] {result.inference_error}")
             self.ai_status_message = "模型推理失败，已回退基础 AI"
         if result.fallback_error:
-            print(f"[AI] 基础 AI 回退失败: {result.fallback_error}")
+            print(f"[AI] {result.fallback_error}")
             self.ai_status_message = "AI 执行失败"
+            self._pending_memory_trace = None
             return
         if result.move is None:
+            self._pending_memory_trace = None
             return
         self.pending_move = result.move
         self.pending_reason = result.reason
+        try:
+            self._pending_memory_trace = ai_decision_trace(result)
+        except Exception as exc:
+            self._pending_memory_trace = None
+            print(f"[MEMORY] 决策轨迹创建失败: {exc}")
         self.ai_act_at = pygame.time.get_ticks() + AI_DELAY_MS
 
     def _ai_progress_text(self):
@@ -939,6 +1063,9 @@ class HexGame:
         self.ai_worker.start()
 
     def quit(self):
+        self._finalize_memory_before_replacement()
+        self._memory_call("flush", timeout=3.0)
+        self._memory_call("close")
         self._cancel_vision_worker(timeout=1.0)
         for worker in self._retired_vision_workers:
             worker.cancel()
@@ -966,7 +1093,6 @@ class HexGame:
         pygame.quit()
         raise SystemExit
 
-    # ---------- 主循环 ----------
     def run(self):
         while True:
             for event in pygame.event.get():
@@ -1072,7 +1198,11 @@ class HexGame:
             ripples=() if replaying else tuple(self.ripples),
         )
         if self.state != S_START:
-            moves = self.replay.current_moves() if replaying else self.engine.game_moves(self.game_no)
+            moves = (
+                self.replay.current_moves()
+                if replaying
+                else self.engine.game_moves(self.game_no)
+            )
             game_no = self.replay.game_no if replaying else self.game_no
             status = self._panel_status()
             if replaying:

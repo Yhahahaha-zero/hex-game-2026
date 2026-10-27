@@ -22,6 +22,8 @@ from hex_board import BLUE, RED
 
 from ai.memory.schema import (
     ACTOR_TYPES,
+    CAPTURE_MODES,
+    COLLECTOR_VERSION,
     DECISION_QUALITIES,
     DEFAULT_BUSY_TIMEOUT_MS,
     FEATURE_VERSION,
@@ -32,6 +34,7 @@ from ai.memory.schema import (
     MEMORY_INDEXES,
     MEMORY_SCHEMA_VERSION,
     MEMORY_TABLES,
+    MIGRATION_DDL,
     RESULT_STATUSES,
     RULES_VERSION,
     RULE_STATUSES,
@@ -89,6 +92,8 @@ class MatchRecord:
     ended_at: str | None = None
     status: str = "active"
     record_id: str | None = None
+    capture_mode: str = "shadow"
+    collector_version: str = COLLECTOR_VERSION
 
 
 @dataclass(frozen=True)
@@ -109,6 +114,7 @@ class GameRecord:
     termination_reason: str | None = None
     status: str = "active"
     ended_at: str | None = None
+    record_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +155,36 @@ class DecisionRecord:
     result_status: str = "unknown"
     validation_reason: str | None = None
     validator_version: str | None = None
+    model_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class GameExperience:
+    game: GameRecord
+    decisions: tuple[tuple[PositionRecord, DecisionRecord], ...]
+
+
+@dataclass(frozen=True)
+class MatchExperience:
+    match: MatchRecord
+    games: tuple[GameExperience, ...]
+
+
+@dataclass(frozen=True)
+class MatchWriteResult:
+    match_changed: bool
+    games_changed: int
+    positions_changed: int
+    decisions_changed: int
+
+    @property
+    def any_changed(self):
+        return any((
+            self.match_changed,
+            self.games_changed,
+            self.positions_changed,
+            self.decisions_changed,
+        ))
 
 
 @dataclass(frozen=True)
@@ -247,6 +283,8 @@ def _validate_match(record):
     _require_timestamp(record.ended_at, "ended_at", optional=True)
     _require_enum(record.status, "status", MATCH_STATUSES)
     _require_text(record.record_id, "record_id", optional=True)
+    _require_enum(record.capture_mode, "capture_mode", CAPTURE_MODES)
+    _require_text(record.collector_version, "collector_version")
 
 
 def _validate_game(record):
@@ -268,6 +306,7 @@ def _validate_game(record):
     _require_color(record.winner_color, "winner_color", optional=True)
     _require_enum(record.status, "status", GAME_STATUSES)
     _require_timestamp(record.ended_at, "ended_at", optional=True)
+    _require_text(record.record_sha256, "record_sha256", optional=True)
 
 
 def _validate_position(record):
@@ -327,6 +366,7 @@ def _validate_decision(record):
     _require_enum(record.integrity_status, "integrity_status", INTEGRITY_STATUSES)
     _require_enum(record.rule_status, "rule_status", RULE_STATUSES)
     _require_enum(record.result_status, "result_status", RESULT_STATUSES)
+    _require_text(record.model_sha256, "model_sha256", optional=True)
 
 
 def _validate_bundle(match, game, position, decision):
@@ -350,6 +390,40 @@ def _validate_bundle(match, game, position, decision):
     if decision.actor_type != expected_actor:
         raise MemoryValidationError("decision.actor_type does not match the game side")
 
+def _validate_match_experience(experience):
+    if not isinstance(experience, MatchExperience):
+        raise MemoryValidationError("experience must be MatchExperience")
+    _validate_match(experience.match)
+    if experience.match.status != "completed":
+        raise MemoryValidationError("complete match must have completed status")
+    if not isinstance(experience.games, tuple) or len(experience.games) != 2:
+        raise MemoryValidationError("complete match must contain exactly two games")
+    game_numbers = []
+    for item in experience.games:
+        if not isinstance(item, GameExperience):
+            raise MemoryValidationError("games must contain GameExperience values")
+        game = item.game
+        _validate_game(game)
+        game_numbers.append(game.game_no)
+        if game.match_id != experience.match.match_id:
+            raise MemoryValidationError("every game must belong to the match")
+        if game.status != "completed" or game.winner_color not in (RED, BLUE):
+            raise MemoryValidationError("every game must have a completed winner")
+        if game.ended_at is None:
+            raise MemoryValidationError("completed games require ended_at")
+        if not isinstance(item.decisions, tuple) or not item.decisions:
+            raise MemoryValidationError("every completed game requires decisions")
+        for position, decision in item.decisions:
+            _validate_bundle(experience.match, game, position, decision)
+            expected = 1.0 if decision.actor_color == game.winner_color else 0.0
+            if decision.result != expected:
+                raise MemoryValidationError("decision result must reflect the game winner")
+            if decision.result_status != "known":
+                raise MemoryValidationError("completed decisions require known result_status")
+    if tuple(sorted(game_numbers)) != (1, 2):
+        raise MemoryValidationError("complete match must contain game 1 and game 2")
+
+
 def _record_dict(record):
     return {
         "match_id": record.match_id,
@@ -364,6 +438,8 @@ def _record_dict(record):
         "ended_at": record.ended_at,
         "status": record.status,
         "record_id": record.record_id,
+        "capture_mode": record.capture_mode,
+        "collector_version": record.collector_version,
     }
 
 
@@ -385,6 +461,7 @@ def _game_dict(record):
         "status": record.status,
         "started_at": record.started_at,
         "ended_at": record.ended_at,
+        "record_sha256": record.record_sha256,
     }
 
 
@@ -427,6 +504,7 @@ def _decision_dict(record):
         "validation_reason": record.validation_reason,
         "validator_version": record.validator_version,
         "created_at": record.created_at,
+        "model_sha256": record.model_sha256,
     }
 
 
@@ -613,10 +691,15 @@ class ExperienceStore:
             raise MemorySchemaError(
                 f"Database schema {version} is newer than supported {MEMORY_SCHEMA_VERSION}"
             )
-        if version < MEMORY_SCHEMA_VERSION:
-            if version != 0:
-                raise MemorySchemaError(f"No migration path from schema version {version}")
+        if version == 0:
             self._apply_initial_schema()
+            return
+        while version < MEMORY_SCHEMA_VERSION:
+            statements = MIGRATION_DDL.get(version)
+            if statements is None:
+                raise MemorySchemaError(f"No migration path from schema version {version}")
+            self._apply_migration(version, statements)
+            version += 1
 
     def _apply_initial_schema(self):
         connection = self._require_connection_unlocked()
@@ -625,6 +708,19 @@ class ExperienceStore:
             for statement in (*TABLE_DDL, *INDEX_DDL):
                 connection.execute(statement)
             connection.execute(f"PRAGMA user_version = {MEMORY_SCHEMA_VERSION}")
+            connection.commit()
+        except sqlite3.DatabaseError as exc:
+            connection.rollback()
+            raise _translate_database_error(exc) from exc
+
+    def _apply_migration(self, source_version, statements):
+        connection = self._require_connection_unlocked()
+        target_version = source_version + 1
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in statements:
+                connection.execute(statement)
+            connection.execute(f"PRAGMA user_version = {target_version}")
             connection.commit()
         except sqlite3.DatabaseError as exc:
             connection.rollback()
@@ -884,6 +980,32 @@ class ExperienceStore:
             decision_changed=decision_changed,
         )
 
+    def save_complete_match(self, experience):
+        """Atomically persist a complete two-game match and all decisions."""
+        _validate_match_experience(experience)
+        with self._write_transaction() as connection:
+            match_changed = self._save_match_connection(connection, experience.match)
+            games_changed = 0
+            positions_changed = 0
+            decisions_changed = 0
+            for item in experience.games:
+                games_changed += int(
+                    self._save_game_connection(connection, item.game)
+                )
+                for position, decision in item.decisions:
+                    positions_changed += int(
+                        self._save_position_connection(connection, position)
+                    )
+                    decisions_changed += int(
+                        self._save_decision_connection(connection, decision)
+                    )
+        return MatchWriteResult(
+            match_changed=match_changed,
+            games_changed=games_changed,
+            positions_changed=positions_changed,
+            decisions_changed=decisions_changed,
+        )
+
     def _get_row(self, table, key_column, key_value):
         with self._lock:
             connection = self._require_connection_unlocked()
@@ -894,6 +1016,20 @@ class ExperienceStore:
 
     def get_match(self, match_id):
         return self._get_row("matches", "match_id", match_id)
+
+    def list_matches(self, *, limit=100):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM matches ORDER BY started_at, match_id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
 
     def get_game(self, game_id):
         return self._get_row("games", "game_id", game_id)

@@ -112,10 +112,16 @@ class MemorySchemaContractTest(unittest.TestCase):
             connection.execute("PRAGMA foreign_keys = ON")
             connection.executescript(SCHEMA_DDL)
             connection.execute(
-                """INSERT INTO matches VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                """
+                INSERT INTO matches (
+                    match_id, schema_version, rules_version, mode_key, mode_name,
+                    red_team, blue_team, source_type, started_at, ended_at,
+                    status, record_id, capture_mode, collector_version
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
                 (match_id, MEMORY_SCHEMA_VERSION, 1, 2, "人机对战",
                  "红队", "蓝队", "human_vs_ai", "2026-01-01T00:00:00",
-                 None, "active", None),
+                 None, "active", None, "shadow", "1.0.0"),
             )
             connection.execute(
                 """
@@ -156,7 +162,7 @@ class MemorySchemaContractTest(unittest.TestCase):
             connection.close()
 
     def test_schema_and_write_rules_are_documented_in_constants(self):
-        self.assertEqual(MEMORY_SCHEMA_VERSION, 1)
+        self.assertEqual(MEMORY_SCHEMA_VERSION, 2)
         self.assertIn("proposal_not_committed", DO_NOT_WRITE_REASONS)
         self.assertIn("move_undone", DO_NOT_WRITE_REASONS)
         self.assertIn("replay_session", DO_NOT_WRITE_REASONS)

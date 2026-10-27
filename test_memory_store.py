@@ -18,6 +18,8 @@ from ai.memory.schema import MEMORY_SCHEMA_VERSION
 from ai.memory.store import (
     DecisionRecord,
     ExperienceStore,
+    GameExperience,
+    MatchExperience,
     GameRecord,
     MatchRecord,
     MemoryClosedError,
@@ -390,6 +392,70 @@ class ExperienceStoreTest(unittest.TestCase):
             second.get_decision(bundle[3].decision_id)["chosen_q"],
             5,
         )
+    def test_complete_match_batch_rolls_back_on_late_conflict(self):
+        match, game, position, decision = self._bundle()
+        completed_match = replace(
+            match,
+            status="completed",
+            ended_at="2026-01-01T00:10:00",
+        )
+        game_one = replace(
+            game,
+            status="completed",
+            winner_color=RED,
+            termination_reason="connect",
+            ended_at="2026-01-01T00:05:00",
+        )
+        decision_one = replace(
+            decision,
+            result=1.0,
+            result_status="known",
+        )
+        game_two = replace(
+            game,
+            game_no=2,
+            status="completed",
+            winner_color=RED,
+            termination_reason="connect",
+            ended_at="2026-01-01T00:10:00",
+        )
+        experience = MatchExperience(
+            match=completed_match,
+            games=(
+                GameExperience(game=game_one, decisions=((position, decision_one),)),
+                GameExperience(game=game_two, decisions=((position, decision_one),)),
+            ),
+        )
+        store = self._open_store()
+        with self.assertRaises(MemoryConflictError):
+            store.save_complete_match(experience)
+        self.assertEqual(store.counts(), {
+            "matches": 0,
+            "games": 0,
+            "positions": 0,
+            "decisions": 0,
+        })
+    def test_v1_database_migrates_to_v2_without_data_loss(self):
+        bundle = self._bundle()
+        store = self._open_store()
+        store.save_decision_bundle(*bundle)
+        store.close()
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("ALTER TABLE matches DROP COLUMN capture_mode")
+            connection.execute("ALTER TABLE matches DROP COLUMN collector_version")
+            connection.execute("ALTER TABLE games DROP COLUMN record_sha256")
+            connection.execute("ALTER TABLE decisions DROP COLUMN model_sha256")
+            connection.execute("PRAGMA user_version = 1")
+            connection.commit()
+        finally:
+            connection.close()
+        with ExperienceStore(self.db_path) as migrated:
+            self.assertEqual(migrated.health_check().schema_version, 2)
+            self.assertEqual(migrated.get_match(bundle[0].match_id)["capture_mode"], "shadow")
+            self.assertEqual(migrated.counts()["decisions"], 1)
+
+
     def test_foreign_key_corruption_is_detected(self):
         bundle = self._bundle()
         store = self._open_store()
