@@ -10,3 +10,10 @@ dist/
 benchmark_results/
 records/*.json
 reports/*/
+
+# Local LLM credentials and temporary analysis output
+.env
+.env.local
+.env.*.local
+llm_cache/
+analysis_logs/
