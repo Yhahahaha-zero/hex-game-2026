@@ -43,11 +43,44 @@ from ai.memory.store import (
     MemoryStoreError,
     MemoryValidationError,
     PositionRecord,
+    RetrievalEventRecord,
     StoreWriteResult,
     recover_database,
 )
 
+from ai.memory.features import FEATURE_VERSION, PositionFeatures, extract_features
+from ai.memory.retrieval import MemoryAdvice, MemoryHit, MemoryRetriever
+from ai.memory.shadow import ShadowComparison, summarize_shadow_events
+from ai.memory.memory_ai import (
+    MemoryAssistedAI,
+    MemoryRetrievalSettings,
+    wrap_ai_with_memory,
+)
+from ai.memory.validator import (
+    VALIDATOR_VERSION,
+    ValidationIssue,
+    ValidationReport,
+    validate_all,
+    validate_match,
+)
+
 __all__ = [
+    "FEATURE_VERSION",
+    "MemoryAdvice",
+    "MemoryHit",
+    "MemoryRetriever",
+    "ShadowComparison",
+    "summarize_shadow_events",
+    "MemoryAssistedAI",
+    "MemoryRetrievalSettings",
+    "wrap_ai_with_memory",
+    "VALIDATOR_VERSION",
+    "ValidationIssue",
+    "ValidationReport",
+    "validate_all",
+    "validate_match",
+    "PositionFeatures",
+    "extract_features",
     "ActorMetadata",
     "DecisionTrace",
     "BoardTransform",
@@ -72,6 +105,7 @@ __all__ = [
     "MemoryStoreError",
     "MemoryValidationError",
     "PositionRecord",
+    "RetrievalEventRecord",
     "StoreWriteResult",
     "TransformedPosition",
     "build_decision_id",

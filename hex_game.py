@@ -667,6 +667,12 @@ class HexGame:
             print(f"[MEMORY] {type(exc).__name__}: {exc}")
             return None
 
+    def _memory_context(self):
+        try:
+            return dict(getattr(self.memory_collector, "current_context", {}) or {})
+        except Exception:
+            return {}
+
     def _start_memory_match(self):
         if self.mode is None:
             return None
@@ -1059,7 +1065,13 @@ class HexGame:
                 return
         color = self.engine.current_color
         self.ai_request_id += 1
-        self.ai_worker = AIWorker(self.board, color, self.ai_request_id, ai=self.ai)
+        self.ai_worker = AIWorker(
+            self.board,
+            color,
+            self.ai_request_id,
+            ai=self.ai,
+            memory_context=self._memory_context(),
+        )
         self.ai_worker.start()
 
     def quit(self):

@@ -29,6 +29,7 @@ from ai.memory.store import (
     MemoryStoreError,
     MemoryValidationError,
     PositionRecord,
+    RetrievalEventRecord,
     recover_database,
 )
 from hex_board import BLUE, RED, HexBoard
@@ -126,6 +127,7 @@ class ExperienceStoreTest(unittest.TestCase):
                 "games": 0,
                 "positions": 0,
                 "decisions": 0,
+                "retrieval_events": 0,
             })
         finally:
             store.close()
@@ -147,6 +149,7 @@ class ExperienceStoreTest(unittest.TestCase):
             "games": 1,
             "positions": 1,
             "decisions": 1,
+            "retrieval_events": 0,
         })
 
     def test_repeated_bundle_is_idempotent(self):
@@ -434,8 +437,9 @@ class ExperienceStoreTest(unittest.TestCase):
             "games": 0,
             "positions": 0,
             "decisions": 0,
+            "retrieval_events": 0,
         })
-    def test_v1_database_migrates_to_v2_without_data_loss(self):
+    def test_v1_database_migrates_to_latest_without_data_loss(self):
         bundle = self._bundle()
         store = self._open_store()
         store.save_decision_bundle(*bundle)
@@ -451,10 +455,52 @@ class ExperienceStoreTest(unittest.TestCase):
         finally:
             connection.close()
         with ExperienceStore(self.db_path) as migrated:
-            self.assertEqual(migrated.health_check().schema_version, 2)
+            self.assertEqual(migrated.health_check().schema_version, 3)
             self.assertEqual(migrated.get_match(bundle[0].match_id)["capture_mode"], "shadow")
             self.assertEqual(migrated.counts()["decisions"], 1)
 
+
+    def test_v2_database_adds_retrieval_events_table(self):
+        bundle = self._bundle()
+        store = self._open_store()
+        store.save_decision_bundle(*bundle)
+        store.close()
+        connection = sqlite3.connect(self.db_path)
+        try:
+            connection.execute("DROP TABLE retrieval_events")
+            connection.execute("PRAGMA user_version = 2")
+            connection.commit()
+        finally:
+            connection.close()
+        with ExperienceStore(self.db_path) as migrated:
+            self.assertEqual(migrated.health_check().schema_version, 3)
+            self.assertIn("retrieval_events", migrated.counts())
+            self.assertEqual(migrated.counts()["decisions"], 1)
+
+    def test_retrieval_event_is_idempotent_and_conflict_checked(self):
+        record = RetrievalEventRecord(
+            retrieval_event_id="retrieval-test-1",
+            query_position_id="pos1-query",
+            query_game_id="game-1",
+            query_match_id="match-1",
+            retrieval_mode="shadow",
+            top_k=5,
+            base_move=(5, 5),
+            shadow_move=(4, 4),
+            final_move=(5, 5),
+            feature_version=1,
+            retrieval_version="1.0.0",
+            elapsed_ms=2.5,
+            evidence_json="{}",
+            created_at="2026-01-01T00:00:00",
+        )
+        store = self._open_store()
+        self.assertTrue(store.save_retrieval_event(record))
+        self.assertFalse(store.save_retrieval_event(record))
+        changed = replace(record, top_k=3)
+        with self.assertRaises(MemoryConflictError):
+            store.save_retrieval_event(changed)
+        self.assertEqual(len(store.list_retrieval_events()), 1)
 
     def test_foreign_key_corruption_is_detected(self):
         bundle = self._bundle()

@@ -38,6 +38,17 @@ class BlockingAI:
         raise RuntimeError("cancelled")
 
 
+class ContextAI(StaticAI):
+    name = "ContextAI"
+
+    def __init__(self):
+        super().__init__()
+        self.context = None
+
+    def set_memory_context(self, **context):
+        self.context = dict(context)
+
+
 class ProgressAI:
     name = "ProgressAI"
 
@@ -104,6 +115,23 @@ class AIWorkerTest(unittest.TestCase):
         self.assertTrue(result.used_fallback)
         self.assertIn("模拟推理失败", result.inference_error)
         self.assertEqual(result.ai.name, "基础AI")
+
+    def test_worker_forwards_memory_context(self):
+        ai = ContextAI()
+        worker = AIWorker(
+            HexBoard(),
+            RED,
+            12,
+            ai=ai,
+            memory_context={"match_id": "m1", "game_id": "g1", "ply": 1},
+        )
+        worker.start()
+        worker.join(2.0)
+        self.assertEqual(ai.context, {
+            "match_id": "m1",
+            "game_id": "g1",
+            "ply": 1,
+        })
 
     def test_worker_exposes_ai_search_progress(self):
         worker = AIWorker(HexBoard(), RED, 10, ai=ProgressAI())

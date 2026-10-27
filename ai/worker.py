@@ -64,7 +64,8 @@ def _default_ai_loader():
 class AIWorker:
     """在后台线程加载 AI、获取着法并在失败时回退 BasicAI。"""
 
-    def __init__(self, board, color, request_id, ai=None, ai_loader=None):
+    def __init__(self, board, color, request_id, ai=None, ai_loader=None,
+                 memory_context=None):
         if color not in (RED, BLUE):
             raise ValueError(f"非法颜色编号: {color!r}")
         self.request_id = request_id
@@ -72,6 +73,7 @@ class AIWorker:
         self.board = _snapshot_board(board)
         self.ai = ai
         self._ai_loader = ai_loader or _default_ai_loader
+        self._memory_context = dict(memory_context or {})
         self._result = None
         self._thread = None
         self._progress_lock = threading.Lock()
@@ -174,6 +176,9 @@ class AIWorker:
                 init_error = str(exc)
                 selected_ai = BasicAI()
 
+        context_setter = getattr(selected_ai, "set_memory_context", None)
+        if callable(context_setter):
+            context_setter(**self._memory_context)
         self._attach_cancel_event(selected_ai)
         if self._cancel_event.is_set():
             self._cancel_result(selected_ai, init_error=init_error)

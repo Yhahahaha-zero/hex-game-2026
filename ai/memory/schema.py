@@ -10,10 +10,11 @@ import os
 from pathlib import Path
 
 
-MEMORY_SCHEMA_VERSION = 2
+MEMORY_SCHEMA_VERSION = 3
 RULES_VERSION = 1
 FEATURE_VERSION = 1
 COLLECTOR_VERSION = "1.0.0"
+RETRIEVAL_VERSION = "1.0.0"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_MEMORY_DB = PROJECT_ROOT.parent / "artifacts" / "memory" / "hex_experience.sqlite3"
 
@@ -26,13 +27,20 @@ RULE_STATUSES = ("valid", "invalid", "unknown")
 RESULT_STATUSES = ("known", "unknown", "invalid")
 SOURCE_TYPES = ("human_vs_ai", "ai_vs_ai", "human_vs_human", "imported", "self_play")
 CAPTURE_MODES = ("shadow",)
-MEMORY_TABLES = ("matches", "games", "positions", "decisions")
+RETRIEVAL_MODES = ("shadow", "assist", "exact", "canonical", "similar")
+MEMORY_TABLES = (
+    "matches", "games", "positions", "decisions", "retrieval_events"
+)
 MEMORY_INDEXES = (
     "idx_positions_canonical",
     "idx_positions_rules_ply",
     "idx_decisions_game",
     "idx_decisions_position",
     "idx_decisions_quality",
+    "idx_decisions_training",
+    "idx_retrieval_query_game",
+    "idx_retrieval_applied",
+    "idx_retrieval_created",
 )
 TABLE_COLUMNS = {
     "matches": (
@@ -51,6 +59,14 @@ TABLE_COLUMNS = {
         "position_id", "experience_key", "canonical_key", "rules_version",
         "feature_version", "board_json", "current_color", "ply",
         "features_json", "created_at",
+    ),
+    "retrieval_events": (
+        "retrieval_event_id", "query_position_id", "query_game_id",
+        "query_match_id", "retrieval_mode", "top_k",
+        "selected_memory_decision_id", "similarity", "memory_q", "memory_r",
+        "base_q", "base_r", "shadow_q", "shadow_r", "final_q", "final_r",
+        "confidence", "applied", "feature_version", "retrieval_version",
+        "elapsed_ms", "evidence_json", "created_at",
     ),
     "decisions": (
         "decision_id", "game_id", "position_id", "ply", "actor_type",
@@ -165,6 +181,38 @@ TABLE_DDL = (
         CHECK(result_status IN ('known','unknown','invalid'))
     );
     """,
+    """
+    CREATE TABLE IF NOT EXISTS retrieval_events (
+        retrieval_event_id TEXT PRIMARY KEY,
+        query_position_id TEXT NOT NULL,
+        query_game_id TEXT,
+        query_match_id TEXT,
+        retrieval_mode TEXT NOT NULL,
+        top_k INTEGER NOT NULL CHECK(top_k >= 1),
+        selected_memory_decision_id TEXT,
+        similarity REAL,
+        memory_q INTEGER CHECK(memory_q BETWEEN 0 AND 10 OR memory_q IS NULL),
+        memory_r INTEGER CHECK(memory_r BETWEEN 0 AND 10 OR memory_r IS NULL),
+        base_q INTEGER CHECK(base_q BETWEEN 0 AND 10 OR base_q IS NULL),
+        base_r INTEGER CHECK(base_r BETWEEN 0 AND 10 OR base_r IS NULL),
+        shadow_q INTEGER CHECK(shadow_q BETWEEN 0 AND 10 OR shadow_q IS NULL),
+        shadow_r INTEGER CHECK(shadow_r BETWEEN 0 AND 10 OR shadow_r IS NULL),
+        final_q INTEGER CHECK(final_q BETWEEN 0 AND 10 OR final_q IS NULL),
+        final_r INTEGER CHECK(final_r BETWEEN 0 AND 10 OR final_r IS NULL),
+        confidence REAL,
+        applied INTEGER NOT NULL DEFAULT 0 CHECK(applied IN (0,1)),
+        feature_version INTEGER NOT NULL,
+        retrieval_version TEXT NOT NULL,
+        elapsed_ms REAL NOT NULL,
+        evidence_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(selected_memory_decision_id)
+            REFERENCES decisions(decision_id),
+        CHECK(retrieval_mode IN (
+            'shadow','assist','exact','canonical','similar'
+        ))
+    );
+    """,
 )
 
 MIGRATION_DDL = {
@@ -180,6 +228,56 @@ MIGRATION_DDL = {
         "ALTER TABLE games ADD COLUMN record_sha256 TEXT;",
         "ALTER TABLE decisions ADD COLUMN model_sha256 TEXT;",
     ),
+    2: (
+        """
+        CREATE TABLE IF NOT EXISTS retrieval_events (
+            retrieval_event_id TEXT PRIMARY KEY,
+            query_position_id TEXT NOT NULL,
+            query_game_id TEXT,
+            query_match_id TEXT,
+            retrieval_mode TEXT NOT NULL,
+            top_k INTEGER NOT NULL CHECK(top_k >= 1),
+            selected_memory_decision_id TEXT,
+            similarity REAL,
+            memory_q INTEGER CHECK(memory_q BETWEEN 0 AND 10 OR memory_q IS NULL),
+            memory_r INTEGER CHECK(memory_r BETWEEN 0 AND 10 OR memory_r IS NULL),
+            base_q INTEGER CHECK(base_q BETWEEN 0 AND 10 OR base_q IS NULL),
+            base_r INTEGER CHECK(base_r BETWEEN 0 AND 10 OR base_r IS NULL),
+            shadow_q INTEGER CHECK(shadow_q BETWEEN 0 AND 10 OR shadow_q IS NULL),
+            shadow_r INTEGER CHECK(shadow_r BETWEEN 0 AND 10 OR shadow_r IS NULL),
+            final_q INTEGER CHECK(final_q BETWEEN 0 AND 10 OR final_q IS NULL),
+            final_r INTEGER CHECK(final_r BETWEEN 0 AND 10 OR final_r IS NULL),
+            confidence REAL,
+            applied INTEGER NOT NULL DEFAULT 0 CHECK(applied IN (0,1)),
+            feature_version INTEGER NOT NULL,
+            retrieval_version TEXT NOT NULL,
+            elapsed_ms REAL NOT NULL,
+            evidence_json TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(selected_memory_decision_id)
+                REFERENCES decisions(decision_id),
+            CHECK(retrieval_mode IN (
+                'shadow','assist','exact','canonical','similar'
+            ))
+        );
+        """,
+        (
+            "CREATE INDEX IF NOT EXISTS idx_decisions_training "
+            "ON decisions(training_eligible, decision_quality);"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_retrieval_query_game "
+            "ON retrieval_events(query_game_id, created_at);"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_retrieval_applied "
+            "ON retrieval_events(applied, retrieval_mode);"
+        ),
+        (
+            "CREATE INDEX IF NOT EXISTS idx_retrieval_created "
+            "ON retrieval_events(created_at);"
+        ),
+    ),
 }
 
 INDEX_DDL = (
@@ -191,6 +289,19 @@ INDEX_DDL = (
         "CREATE INDEX IF NOT EXISTS idx_decisions_quality "
         "ON decisions(decision_quality, training_eligible);"
     ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_decisions_training "
+        "ON decisions(training_eligible, decision_quality);"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_retrieval_query_game "
+        "ON retrieval_events(query_game_id, created_at);"
+    ),
+    (
+        "CREATE INDEX IF NOT EXISTS idx_retrieval_applied "
+        "ON retrieval_events(applied, retrieval_mode);"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_retrieval_created ON retrieval_events(created_at);",
 )
 
 SCHEMA_DDL = "\n".join(TABLE_DDL + INDEX_DDL)

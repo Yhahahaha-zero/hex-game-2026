@@ -1,19 +1,8 @@
 # -*- coding: utf-8 -*-
-"""Hex AI 对比评测工具。
+"""Fixed-seed AB/BA benchmark for built-in and custom Hex AIs.
 
-支持：
-- 内置 basic / random AI；
-- 自定义 AI 类或工厂：module:Class、path/to/file.py:Class；
-- 固定随机种子；
-- AB/BA 配对并交换红蓝；
-- 多轮重复实验；
-- 汇总胜率、执色胜率、平均手数、平均/最大耗时和异常；
-- 输出 JSON、汇总 CSV 和逐局 CSV。
-
-示例：
-  python tools/benchmark_ai.py --games 500 --repeats 3
-  python tools/benchmark_ai.py --ai-a basic --ai-b random --games 1000
-  python tools/benchmark_ai.py --ai-a basic --ai-b models.my_ai:ModelAI
+Supports basic/random/hybrid/neural/strategic AIs, memory wrappers,
+custom module:Class factories, JSON/CSV reports, and per-move latency data.
 """
 import argparse
 import csv
@@ -52,6 +41,32 @@ def _safe_filename(name):
 def load_ai_factory(spec):
     """返回无参 AI 工厂。支持内置名、module:Class 和 file.py:Class。"""
     spec = str(spec).strip()
+    memory_modes = {
+        "memory-shadow:": "shadow",
+        "memory-assist:": "assist",
+        "memory:": "shadow",
+    }
+    for prefix, mode in memory_modes.items():
+        if spec.startswith(prefix):
+            base_spec = spec[len(prefix):]
+            if not base_spec:
+                raise ValueError("memory wrapper requires a base AI")
+            base_factory = load_ai_factory(base_spec)
+
+            def memory_factory():
+                from dataclasses import replace
+                from ai.memory.memory_ai import (
+                    MemoryAssistedAI,
+                    MemoryRetrievalSettings,
+                )
+                settings = replace(
+                    MemoryRetrievalSettings.from_env(),
+                    mode=mode,
+                )
+                return MemoryAssistedAI(base_factory(), settings=settings)
+
+            return memory_factory
+
     if spec == "hybrid":
         def hybrid_factory():
             from ai.hybrid_ai import HybridAI

@@ -243,6 +243,10 @@ class NullMemoryCollector:
     def stats(self):
         return MemoryCollectorStats()
 
+    @property
+    def current_context(self):
+        return {}
+
 class MemoryCollector:
     """Buffer complete matches and persist them without affecting gameplay."""
 
@@ -614,6 +618,20 @@ class MemoryCollector:
         with self._lock:
             self._clear_match()
             return str(reason)
+
+    @property
+    def current_context(self):
+        with self._lock:
+            if self._match is None or self._current_game is None:
+                return {}
+            return {
+                "match_id": self._match.match_id,
+                "game_id": build_game_id(
+                    self._match.match_id, self._current_game.game_no
+                ),
+                "game_no": self._current_game.game_no,
+                "ply": len(self._current_game.moves) + 1,
+            }
 
     def _clear_match(self):
         self._match = None

@@ -109,6 +109,7 @@ class MemoryCollectorTest(unittest.TestCase):
                 "games": 2,
                 "positions": 1,
                 "decisions": 2,
+                "retrieval_events": 0,
             })
             match = store.list_matches()[0]
             stored_match = store.get_match(match["match_id"])

@@ -36,6 +36,8 @@ from ai.memory.schema import (
     MEMORY_TABLES,
     MIGRATION_DDL,
     RESULT_STATUSES,
+    RETRIEVAL_MODES,
+    RETRIEVAL_VERSION,
     RULES_VERSION,
     RULE_STATUSES,
     SOURCE_TYPES,
@@ -156,6 +158,29 @@ class DecisionRecord:
     validation_reason: str | None = None
     validator_version: str | None = None
     model_sha256: str | None = None
+
+
+@dataclass(frozen=True)
+class RetrievalEventRecord:
+    retrieval_event_id: str
+    query_position_id: str
+    retrieval_mode: str
+    top_k: int
+    feature_version: int
+    retrieval_version: str
+    elapsed_ms: float
+    created_at: str
+    query_game_id: str | None = None
+    query_match_id: str | None = None
+    selected_memory_decision_id: str | None = None
+    similarity: float | None = None
+    memory_move: tuple[int, int] | None = None
+    base_move: tuple[int, int] | None = None
+    shadow_move: tuple[int, int] | None = None
+    final_move: tuple[int, int] | None = None
+    confidence: float | None = None
+    applied: int = 0
+    evidence_json: str | None = None
 
 
 @dataclass(frozen=True)
@@ -390,6 +415,48 @@ def _validate_bundle(match, game, position, decision):
     if decision.actor_type != expected_actor:
         raise MemoryValidationError("decision.actor_type does not match the game side")
 
+def _validate_retrieval_event(record):
+    if not isinstance(record, RetrievalEventRecord):
+        raise MemoryValidationError("record must be RetrievalEventRecord")
+    for field in ("retrieval_event_id", "query_position_id", "retrieval_version"):
+        _require_text(getattr(record, field), field)
+    for field in ("query_game_id", "query_match_id", "selected_memory_decision_id"):
+        _require_text(getattr(record, field), field, optional=True)
+    _require_enum(record.retrieval_mode, "retrieval_mode", RETRIEVAL_MODES)
+    _require_int(record.top_k, "top_k", minimum=1)
+    _require_int(record.feature_version, "feature_version", minimum=1)
+    if isinstance(record.elapsed_ms, bool) or not isinstance(record.elapsed_ms, (int, float)):
+        raise MemoryValidationError("elapsed_ms must be numeric")
+    if record.elapsed_ms < 0:
+        raise MemoryValidationError("elapsed_ms must be non-negative")
+    _require_timestamp(record.created_at, "created_at")
+    if record.applied not in (0, 1):
+        raise MemoryValidationError("applied must be 0 or 1")
+    for field, value in (
+        ("memory_move", record.memory_move),
+        ("base_move", record.base_move),
+        ("shadow_move", record.shadow_move),
+        ("final_move", record.final_move),
+    ):
+        if value is None:
+            continue
+        if not isinstance(value, tuple) or len(value) != 2:
+            raise MemoryValidationError(f"{field} must be a two-item tuple")
+        for coordinate in value:
+            _require_int(coordinate, field, minimum=0)
+            if coordinate > 10:
+                raise MemoryValidationError(f"{field} coordinate must be <= 10")
+    for field in ("similarity", "confidence"):
+        value = getattr(record, field)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise MemoryValidationError(f"{field} must be numeric")
+        if not 0.0 <= float(value) <= 1.0:
+            raise MemoryValidationError(f"{field} must be between 0 and 1")
+    _require_json_text(record.evidence_json, "evidence_json", optional=True)
+
+
 def _validate_match_experience(experience):
     if not isinstance(experience, MatchExperience):
         raise MemoryValidationError("experience must be MatchExperience")
@@ -422,6 +489,35 @@ def _validate_match_experience(experience):
                 raise MemoryValidationError("completed decisions require known result_status")
     if tuple(sorted(game_numbers)) != (1, 2):
         raise MemoryValidationError("complete match must contain game 1 and game 2")
+
+
+def _retrieval_event_dict(record):
+    value = {
+        "retrieval_event_id": record.retrieval_event_id,
+        "query_position_id": record.query_position_id,
+        "query_game_id": record.query_game_id,
+        "query_match_id": record.query_match_id,
+        "retrieval_mode": record.retrieval_mode,
+        "top_k": record.top_k,
+        "selected_memory_decision_id": record.selected_memory_decision_id,
+        "similarity": record.similarity,
+        "memory_q": record.memory_move[0] if record.memory_move else None,
+        "memory_r": record.memory_move[1] if record.memory_move else None,
+        "base_q": record.base_move[0] if record.base_move else None,
+        "base_r": record.base_move[1] if record.base_move else None,
+        "shadow_q": record.shadow_move[0] if record.shadow_move else None,
+        "shadow_r": record.shadow_move[1] if record.shadow_move else None,
+        "final_q": record.final_move[0] if record.final_move else None,
+        "final_r": record.final_move[1] if record.final_move else None,
+        "confidence": record.confidence,
+        "applied": int(record.applied),
+        "feature_version": record.feature_version,
+        "retrieval_version": record.retrieval_version,
+        "elapsed_ms": float(record.elapsed_ms),
+        "evidence_json": record.evidence_json,
+        "created_at": record.created_at,
+    }
+    return value
 
 
 def _record_dict(record):
@@ -1005,6 +1101,219 @@ class ExperienceStore:
             positions_changed=positions_changed,
             decisions_changed=decisions_changed,
         )
+
+    def update_position_features(self, position_id, features_json, *,
+                                 feature_version=1):
+        _require_text(position_id, "position_id")
+        _require_json_text(features_json, "features_json")
+        _require_int(feature_version, "feature_version", minimum=1)
+        with self._write_transaction() as connection:
+            if self._select_one(
+                connection, "positions", "position_id", position_id
+            ) is None:
+                raise MemoryConflictError("position_id does not exist")
+            connection.execute(
+                "UPDATE positions SET features_json = ?, feature_version = ? "
+                "WHERE position_id = ?",
+                (features_json, feature_version, position_id),
+            )
+        return True
+
+    def save_retrieval_event(self, record):
+        _validate_retrieval_event(record)
+        values = _retrieval_event_dict(record)
+        with self._write_transaction() as connection:
+            current = self._select_one(
+                connection,
+                "retrieval_events",
+                "retrieval_event_id",
+                record.retrieval_event_id,
+            )
+            if current is None:
+                self._insert_row(connection, "retrieval_events", values)
+                return True
+            for key, value in values.items():
+                if current[key] != value:
+                    raise MemoryConflictError(
+                        f"retrieval_event_id already exists with a different {key}"
+                    )
+            return False
+
+    def list_retrieval_events(self, *, query_game_id=None, limit=500):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        parameters = []
+        where = ""
+        if query_game_id is not None:
+            _require_text(query_game_id, "query_game_id")
+            where = " WHERE query_game_id = ?"
+            parameters.append(query_game_id)
+        parameters.append(limit)
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM retrieval_events"
+                    + where
+                    + " ORDER BY created_at, retrieval_event_id LIMIT ?",
+                    tuple(parameters),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
+    def list_positions_missing_features(self, *, limit=1000):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM positions WHERE features_json IS NULL "
+                    "ORDER BY created_at, position_id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
+    def all_positions(self, *, limit=100000):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(
+                    "SELECT * FROM positions ORDER BY created_at, position_id LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
+    def query_validated_memory(self, *, current_color, ply, feature_version,
+                               ply_window=6, exclude_match_id=None,
+                               exclude_game_id=None, limit=2000):
+        _require_color(current_color, "current_color")
+        _require_int(ply, "ply", minimum=1)
+        _require_int(feature_version, "feature_version", minimum=1)
+        _require_int(ply_window, "ply_window", minimum=0)
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        clauses = [
+            "d.training_eligible = 1",
+            "d.decision_quality = 'validated'",
+            "d.actor_type = 'ai'",
+            "p.current_color = ?",
+            "p.rules_version = ?",
+            "p.feature_version = ?",
+            "p.features_json IS NOT NULL",
+            "p.ply BETWEEN ? AND ?",
+        ]
+        parameters = [
+            current_color,
+            RULES_VERSION,
+            feature_version,
+            max(1, ply - ply_window),
+            ply + ply_window,
+        ]
+        if exclude_match_id:
+            clauses.append("g.match_id != ?")
+            parameters.append(str(exclude_match_id))
+        if exclude_game_id:
+            clauses.append("g.game_id != ?")
+            parameters.append(str(exclude_game_id))
+        parameters.append(limit)
+        query = (
+            "SELECT d.*, p.canonical_key, p.board_json, p.features_json, "
+            "p.feature_version, p.ply AS position_ply, g.match_id, "
+            "g.winner_color "
+            "FROM decisions d "
+            "JOIN positions p ON p.position_id = d.position_id "
+            "JOIN games g ON g.game_id = d.game_id "
+            "WHERE "
+            + " AND ".join(clauses)
+            + " ORDER BY d.decision_id LIMIT ?"
+        )
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(query, tuple(parameters)).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
+    def load_match_for_validation(self, match_id):
+        _require_text(match_id, "match_id")
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                match_row = connection.execute(
+                    "SELECT * FROM matches WHERE match_id = ?", (match_id,)
+                ).fetchone()
+                if match_row is None:
+                    return None
+                game_rows = connection.execute(
+                    "SELECT * FROM games WHERE match_id = ? ORDER BY game_no",
+                    (match_id,),
+                ).fetchall()
+                rows = connection.execute(
+                    "SELECT d.*, p.board_json, p.current_color, "
+                    "p.ply AS position_ply, p.experience_key, p.canonical_key, "
+                    "p.feature_version, p.features_json, g.match_id, "
+                    "g.game_no, g.winner_color, g.status AS game_status "
+                    "FROM decisions d "
+                    "JOIN positions p ON p.position_id = d.position_id "
+                    "JOIN games g ON g.game_id = d.game_id "
+                    "WHERE g.match_id = ? "
+                    "ORDER BY g.game_no, d.ply, d.decision_id",
+                    (match_id,),
+                ).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return {
+            "match": dict(match_row),
+            "games": [dict(row) for row in game_rows],
+            "decisions": [dict(row) for row in rows],
+        }
+
+    def batch_update_decision_validation(self, updates):
+        if not updates:
+            return 0
+        prepared = []
+        for update in updates:
+            decision_id = update.get("decision_id")
+            _require_text(decision_id, "decision_id")
+            quality = update.get("decision_quality", "unverified")
+            _require_enum(quality, "decision_quality", DECISION_QUALITIES)
+            training_eligible = int(update.get("training_eligible", 0))
+            if training_eligible not in (0, 1):
+                raise MemoryValidationError("training_eligible must be 0 or 1")
+            integrity = update.get("integrity_status", "unknown")
+            rule = update.get("rule_status", "unknown")
+            result = update.get("result_status", "unknown")
+            _require_enum(integrity, "integrity_status", INTEGRITY_STATUSES)
+            _require_enum(rule, "rule_status", RULE_STATUSES)
+            _require_enum(result, "result_status", RESULT_STATUSES)
+            prepared.append((
+                quality,
+                training_eligible,
+                integrity,
+                rule,
+                result,
+                update.get("validation_reason"),
+                update.get("validator_version"),
+                decision_id,
+            ))
+        with self._write_transaction() as connection:
+            connection.executemany(
+                "UPDATE decisions SET decision_quality = ?, training_eligible = ?, "
+                "integrity_status = ?, rule_status = ?, result_status = ?, "
+                "validation_reason = ?, validator_version = ? "
+                "WHERE decision_id = ?",
+                prepared,
+            )
+        return len(prepared)
 
     def _get_row(self, table, key_column, key_value):
         with self._lock:
