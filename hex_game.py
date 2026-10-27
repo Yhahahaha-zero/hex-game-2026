@@ -22,6 +22,9 @@ from ui import theme
 from ui.board_renderer import (BOARD_W, WINDOW_H, BoardRenderer,
                                cell_center, hex_corners, pixel_to_hex)
 from ui.analysis_panel import AnalysisPanel
+from ui.vision_panel import VisionPanel
+from vision.worker import VisionImportWorker
+from vision.config import VisionConfigError, load_vision_config
 from ui.history_panel import HistoryPanel, PANEL_W
 from ui.screen_renderer import OverlayRenderer, make_confetti
 from ui.sound import SoundManager
@@ -91,6 +94,14 @@ class HexGame:
         self.overlay = OverlayRenderer(self)
         self.analysis_panel = AnalysisPanel()
         self.analysis_panel.set_fonts(self.font_m, self.font_s, self.font_xs)
+        self.vision_panel = VisionPanel()
+        self.vision_panel.set_fonts(self.font_m, self.font_s, self.font_xs)
+        self.vision_worker = None
+        self._retired_vision_workers = []
+        self.vision_request_id = 0
+        self.vision_status = "idle"
+        self.vision_error = ""
+        self.vision_available = self._read_vision_available()
         self._analysis_advisor_factory = analysis_advisor_factory
         self._analysis_advisor = None
         self.analysis_worker = None
@@ -257,6 +268,7 @@ class HexGame:
         self.analysis_panel.show()
 
     def start_analysis(self):
+        self.close_vision_panel()
         if self.analysis_worker is not None and self.analysis_worker.is_alive():
             self.analysis_panel.show()
             return False
@@ -348,6 +360,156 @@ class HexGame:
         self.analysis_panel.show()
         return True
 
+    def _read_vision_available(self):
+        try:
+            if not load_vision_config().enabled:
+                return False
+        except VisionConfigError:
+            return False
+        try:
+            import numpy  # noqa: F401
+            from PIL import Image  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+    def _cancel_vision_worker(self, timeout=0.1):
+        for worker in self._retired_vision_workers:
+            worker.cancel()
+        worker = self.vision_worker
+        if worker is None:
+            self._prune_retired_vision_workers()
+            return True
+        worker.cancel()
+        stopped = worker.join(timeout)
+        if not stopped:
+            self._retired_vision_workers.append(worker)
+        self.vision_worker = None
+        self._prune_retired_vision_workers()
+        return stopped
+
+    def _prune_retired_vision_workers(self):
+        self._retired_vision_workers = [
+            worker for worker in self._retired_vision_workers
+            if worker.is_alive()
+        ]
+
+    def close_vision_panel(self):
+        if self.vision_worker is not None:
+            self._cancel_vision_worker()
+            self.vision_request_id += 1
+        self.vision_status = "idle"
+        self.vision_error = ""
+        self.vision_panel.hide()
+
+    def start_vision_import(self, image_path):
+        if not self.vision_available:
+            self.vision_status = "error"
+            self.vision_error = "视觉依赖未安装，请安装 requirements-vision.txt"
+            self.vision_panel.show(status="error", error=self.vision_error)
+            return False
+        if self.vision_worker is not None and self.vision_worker.is_alive():
+            self.vision_panel.show(status="processing")
+            return False
+        self.close_analysis()
+        self._cancel_vision_worker()
+        self.vision_request_id += 1
+        self.vision_status = "processing"
+        self.vision_error = ""
+        self.vision_panel.show(status="processing")
+        try:
+            vision_config = load_vision_config()
+        except VisionConfigError as exc:
+            self.vision_status = "error"
+            self.vision_error = f"视觉配置无效: {exc}"
+            self.vision_panel.show(status="error", error=self.vision_error)
+            return False
+        use_vlm = False
+        model_name = "qwen3-vl-plus"
+        try:
+            llm_config = load_llm_config()
+            use_vlm = bool(llm_config.enabled and vision_config.vlm_fallback)
+            model_name = llm_config.vision_model
+        except Exception:
+            pass
+        worker = VisionImportWorker(
+            image_path,
+            self.vision_request_id,
+            use_vlm=use_vlm,
+            model_name=model_name,
+            min_confidence=vision_config.min_confidence,
+            max_image_mb=vision_config.max_image_mb,
+            cache_enabled=vision_config.cache_enabled,
+        )
+        self.vision_worker = worker
+        worker.start()
+        self.sound.play("click")
+        return True
+
+    def open_vision_dialog(self):
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            path = filedialog.askopenfilename(
+                title="选择海克斯棋棋盘截图",
+                filetypes=(
+                    ("图片", "*.png *.jpg *.jpeg *.webp"),
+                    ("所有文件", "*.*"),
+                ),
+            )
+            root.destroy()
+        except Exception as exc:
+            self.vision_status = "error"
+            self.vision_error = f"无法打开文件选择器: {exc}"
+            self.vision_panel.show(status="error", error=self.vision_error)
+            return False
+        if not path:
+            return False
+        return self.start_vision_import(path)
+
+    def update_vision_import(self):
+        self._prune_retired_vision_workers()
+        worker = self.vision_worker
+        if worker is None or worker.is_alive():
+            return False
+        self.vision_worker = None
+        result = worker.result
+        if result is None or result.request_id != self.vision_request_id:
+            return False
+        if result.status == "cancelled":
+            self.vision_status = "idle"
+            return False
+        if result.status == "error":
+            self.vision_status = "error"
+            self.vision_error = result.error or "视觉导入失败"
+            self.vision_panel.show(status="error", error=self.vision_error)
+            return False
+        self.vision_status = "complete"
+        self.vision_error = ""
+        self.vision_panel.show(status="complete", session=result.session)
+        return True
+
+    def save_vision_snapshot(self):
+        session = self.vision_panel.session
+        state = getattr(session, "state", None)
+        if state is None or not state.valid or state.uncertain_cells:
+            self.panel_message = "识别结果仍需人工检查，不能保存"
+            return False
+        try:
+            try:
+                output_dir = load_vision_config().output_dir or None
+            except VisionConfigError:
+                output_dir = None
+            path = session.save_snapshot(output_dir)
+            self.panel_message = f"视觉快照已保存：{path.name}"
+        except Exception as exc:
+            self.panel_message = f"视觉快照保存失败：{exc}"
+            return False
+        self.close_vision_panel()
+        return True
+
     def _cancel_ai_worker(self, timeout=0.6):
         for retired in self._retired_workers:
             retired.cancel()
@@ -378,6 +540,7 @@ class HexGame:
 
     def _reset_transient_state(self):
         self._invalidate_analysis(hide=True)
+        self.close_vision_panel()
         self._cancel_ai_worker()
         self.timer_history = []
         self.hover = None
@@ -490,6 +653,7 @@ class HexGame:
             self.replay = ReplaySession(document)
             self._cancel_ai_worker()
             self._invalidate_analysis(hide=True)
+            self.close_vision_panel()
             self.replay_return_state = self.state
             self.timer.pause()
             self.state = S_REPLAY
@@ -543,7 +707,6 @@ class HexGame:
     def pick(self, pos):
         q, r = pixel_to_hex(*pos)
         return (q, r) if self.board.in_range(q, r) else None
-
     def _handle_panel_click(self, pos):
         if self.state == S_START:
             return False
@@ -565,9 +728,22 @@ class HexGame:
         if self.history_panel.analysis_button.collidepoint(pos):
             self.start_analysis()
             return True
+        if self.history_panel.vision_button.collidepoint(pos):
+            self.open_vision_dialog()
+            return True
         return False
 
     def on_click(self, pos):
+        if self.vision_panel.visible:
+            action = self.vision_panel.handle_click(pos)
+            if action == "reimport":
+                self.open_vision_dialog()
+            elif action == "save":
+                self.save_vision_snapshot()
+            elif action == "close":
+                self.close_vision_panel()
+            return
+
         if self.analysis_panel.visible:
             action = self.analysis_panel.handle_click(pos)
             if action == "retry":
@@ -763,6 +939,14 @@ class HexGame:
         self.ai_worker.start()
 
     def quit(self):
+        self._cancel_vision_worker(timeout=1.0)
+        for worker in self._retired_vision_workers:
+            worker.cancel()
+            worker.join(0.2)
+        self._retired_vision_workers = [
+            worker for worker in self._retired_vision_workers
+            if worker.is_alive()
+        ]
         self._cancel_analysis_worker(timeout=1.0)
         for worker in self._retired_analysis_workers:
             worker.cancel()
@@ -790,8 +974,15 @@ class HexGame:
                     self.quit()
                 if event.type == pygame.KEYDOWN:
                     ctrl = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+                    if event.key == pygame.K_F7:
+                        self.open_vision_dialog()
+                        continue
                     if event.key == pygame.K_F6:
                         self.toggle_analysis()
+                        continue
+                    if self.vision_panel.visible:
+                        if event.key == pygame.K_ESCAPE:
+                            self.close_vision_panel()
                         continue
                     if self.analysis_panel.visible:
                         if event.key == pygame.K_ESCAPE:
@@ -843,6 +1034,7 @@ class HexGame:
                   and pygame.time.get_ticks() - self.win_at > WATCH_AUTO_MS):
                 self.advance_match()
             self.update_analysis()
+            self.update_vision_import()
             self.draw()
             self._present()
             self.clock.tick(60)
@@ -905,6 +1097,7 @@ class HexGame:
                 ),
                 analysis_active=self.analysis_status == "loading",
                 analysis_available=self.analysis_configured,
+                vision_available=self.vision_available,
             )
         self.draw_hud()
         if self.state == S_START:
@@ -925,6 +1118,8 @@ class HexGame:
                 elapsed_ms=self.analysis_elapsed_ms,
                 position_id=self.analysis_position_id,
             )
+        if self.vision_panel.visible:
+            self.vision_panel.draw(self.screen)
 
     def _panel_status(self):
         if self.state == S_REPLAY and self.replay is not None:

@@ -1,0 +1,4 @@
+# Optional standard-screenshot vision dependencies.
+numpy>=2.0
+Pillow>=11.0
+# Future arbitrary-photo perspective detection may add OpenCV.

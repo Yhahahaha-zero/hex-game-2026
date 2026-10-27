@@ -244,5 +244,20 @@ class UITest(unittest.TestCase):
         game.on_click(game.analysis_panel.close_button.center)
         self.assertFalse(game.analysis_panel.visible)
 
+    def test_vision_button_layout_and_error_panel(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        analysis = game.history_panel.analysis_button
+        vision = game.history_panel.vision_button
+        self.assertEqual(analysis.y, vision.y)
+        self.assertLess(analysis.right, vision.left)
+        game.vision_panel.show(status="error", error="测试视觉错误")
+        game.draw()
+        self.assertTrue(game.vision_panel.visible)
+        self.assertGreater(game.vision_panel.panel_rect.width, 0)
+        game.on_click(game.vision_panel.close_button.center)
+        self.assertFalse(game.vision_panel.visible)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

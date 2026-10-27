@@ -1,3 +1,4 @@
-﻿# Development dependencies for tests, benchmarks and neural AI.
+# Development dependencies for tests, benchmarks and neural AI.
 -r requirements.txt
 -r requirements-ai.txt
+-r requirements-vision.txt
