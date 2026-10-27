@@ -182,6 +182,9 @@ class RetrievalEventRecord:
     applied: int = 0
     evidence_json: str | None = None
     query_ply: int | None = None
+    selection_probability: float | None = None
+    exploration_epsilon: float | None = None
+    policy_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -236,6 +239,60 @@ class TrainingRunRecord:
     candidate_model_sha256: str | None = None
     metrics_json: str | None = None
     finished_at: str | None = None
+
+
+@dataclass(frozen=True)
+class TrustModelRecord:
+    trust_model_id: str
+    model_path: str
+    sha256: str
+    feature_version: int
+    status: str
+    created_at: str
+    metrics_json: str | None = None
+
+
+@dataclass(frozen=True)
+class ActiveLearningCandidateRecord:
+    candidate_id: str
+    position_id: str
+    decision_id: str
+    priority: float
+    created_at: str
+    reason_json: str | None = None
+    selected: int = 0
+    dataset_id: str | None = None
+
+
+@dataclass(frozen=True)
+class OpponentProfileRecord:
+    opponent_id: str
+    ai_name: str
+    created_at: str
+    ai_version: str | None = None
+    model_sha256: str | None = None
+    elo: float | None = None
+    metrics_json: str | None = None
+
+
+@dataclass(frozen=True)
+class LeagueRunRecord:
+    league_run_id: str
+    status: str
+    started_at: str
+    candidate_sha256: str | None = None
+    metrics_json: str | None = None
+    finished_at: str | None = None
+
+
+@dataclass(frozen=True)
+class DriftSnapshotRecord:
+    snapshot_id: str
+    window_start: str
+    window_end: str
+    metrics_json: str
+    alerts_json: str
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -481,6 +538,11 @@ def _validate_retrieval_event(record):
     _require_int(record.top_k, "top_k", minimum=1)
     _require_int(record.feature_version, "feature_version", minimum=1)
     _require_int(record.query_ply, "query_ply", minimum=1, optional=True)
+    for field in ("selection_probability", "exploration_epsilon"):
+        value = getattr(record, field)
+        if value is not None and not 0.0 <= float(value) <= 1.0:
+            raise MemoryValidationError(f"{field} must be between 0 and 1")
+    _require_text(record.policy_version, "policy_version", optional=True)
     if isinstance(record.elapsed_ms, bool) or not isinstance(record.elapsed_ms, (int, float)):
         raise MemoryValidationError("elapsed_ms must be numeric")
     if record.elapsed_ms < 0:
@@ -573,6 +635,9 @@ def _retrieval_event_dict(record):
         "evidence_json": record.evidence_json,
         "created_at": record.created_at,
         "query_ply": record.query_ply,
+        "selection_probability": record.selection_probability,
+        "exploration_epsilon": record.exploration_epsilon,
+        "policy_version": record.policy_version,
     }
     return value
 
@@ -1582,6 +1647,144 @@ class ExperienceStore:
             connection = self._require_connection_unlocked()
             rows = connection.execute(
                 "SELECT * FROM training_runs ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _save_immutable_row(self, table, key_column, key_value, values):
+        with self._write_transaction() as connection:
+            current = self._select_one(connection, table, key_column, key_value)
+            if current is None:
+                self._insert_row(connection, table, values)
+                return True
+            for key, value in values.items():
+                if current[key] != value:
+                    raise MemoryConflictError(
+                        f"{key_column} already exists with a different {key}"
+                    )
+            return False
+
+    def save_trust_model(self, record):
+        fields = (
+            "trust_model_id", "model_path", "sha256", "feature_version",
+            "metrics_json", "status", "created_at",
+        )
+        _require_enum(record.status, "status", (
+            "candidate", "selected", "rejected", "rolled_back"
+        ))
+        _require_int(record.feature_version, "feature_version", minimum=1)
+        return self._save_immutable_row(
+            "trust_models", "trust_model_id", record.trust_model_id,
+            _simple_record_values(record, fields),
+        )
+
+    def list_trust_models(self, *, limit=100):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM trust_models ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_active_learning_candidate(self, record):
+        fields = (
+            "candidate_id", "position_id", "decision_id", "priority",
+            "reason_json", "selected", "dataset_id", "created_at",
+        )
+        if record.selected not in (0, 1):
+            raise MemoryValidationError("selected must be 0 or 1")
+        return self._save_immutable_row(
+            "active_learning_queue", "candidate_id", record.candidate_id,
+            _simple_record_values(record, fields),
+        )
+
+    def list_active_learning_candidates(self, *, selected=None, limit=1000):
+        where = ""
+        parameters = []
+        if selected is not None:
+            where = " WHERE selected = ?"
+            parameters.append(int(selected))
+        parameters.append(limit)
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM active_learning_queue"
+                + where
+                + " ORDER BY priority DESC, created_at, candidate_id LIMIT ?",
+                tuple(parameters),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_opponent_profile(self, record):
+        fields = (
+            "opponent_id", "ai_name", "ai_version", "model_sha256", "elo",
+            "metrics_json", "created_at",
+        )
+        return self._save_immutable_row(
+            "opponent_profiles", "opponent_id", record.opponent_id,
+            _simple_record_values(record, fields),
+        )
+
+    def list_opponent_profiles(self, *, limit=100):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM opponent_profiles ORDER BY elo DESC, opponent_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_league_run(self, record):
+        fields = (
+            "league_run_id", "candidate_sha256", "status", "metrics_json",
+            "started_at", "finished_at",
+        )
+        return self._save_immutable_row(
+            "league_runs", "league_run_id", record.league_run_id,
+            _simple_record_values(record, fields),
+        )
+
+    def update_league_run(self, league_run_id, *, status, metrics_json=None,
+                          finished_at=None):
+        updates = {"status": status}
+        if metrics_json is not None:
+            updates["metrics_json"] = metrics_json
+        if finished_at is not None:
+            updates["finished_at"] = finished_at
+        with self._write_transaction() as connection:
+            self._update_row(
+                connection, "league_runs", "league_run_id",
+                league_run_id, updates,
+            )
+        return True
+
+    def list_league_runs(self, *, limit=100):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM league_runs ORDER BY started_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_drift_snapshot(self, record):
+        fields = (
+            "snapshot_id", "window_start", "window_end", "metrics_json",
+            "alerts_json", "created_at",
+        )
+        _require_json_text(record.metrics_json, "metrics_json")
+        _require_json_text(record.alerts_json, "alerts_json")
+        return self._save_immutable_row(
+            "drift_snapshots", "snapshot_id", record.snapshot_id,
+            _simple_record_values(record, fields),
+        )
+
+    def list_drift_snapshots(self, *, limit=100):
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            rows = connection.execute(
+                "SELECT * FROM drift_snapshots ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [dict(row) for row in rows]

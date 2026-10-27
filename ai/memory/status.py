@@ -15,6 +15,10 @@ def build_memory_status(store, *, models_dir, policy_file=None):
     datasets = store.list_dataset_versions(limit=20)
     trainings = store.list_training_runs(limit=20)
     jobs = store.list_memory_jobs(limit=10000)
+    trust_models = store.list_trust_models(limit=20)
+    active_candidates = store.list_active_learning_candidates(limit=20)
+    league_runs = store.list_league_runs(limit=20)
+    drift_snapshots = store.list_drift_snapshots(limit=20)
     models_dir = Path(models_dir)
     selected_path = models_dir / "selected_model.json"
     selected_model = None
@@ -24,6 +28,10 @@ def build_memory_status(store, *, models_dir, policy_file=None):
     policy_path = Path(policy_file) if policy_file else models_dir / "memory_policy.json"
     if policy_path.is_file():
         policy = load_retrieval_policy(policy_path).as_dict()
+    deployment_path = models_dir / "deployment_manifest.json"
+    deployment = None
+    if deployment_path.is_file():
+        deployment = json.loads(deployment_path.read_text(encoding="utf-8-sig"))
     history_path = models_dir / "selected_model_history.jsonl"
     history_count = 0
     if history_path.is_file():
@@ -45,7 +53,12 @@ def build_memory_status(store, *, models_dir, policy_file=None):
         },
         "datasets": datasets,
         "training_runs": trainings,
+        "trust_models": trust_models,
+        "active_learning_candidates": active_candidates,
+        "league_runs": league_runs,
+        "drift_snapshots": drift_snapshots,
         "selected_model": selected_model,
+        "deployment_manifest": deployment,
         "rollback_available": history_count > 0,
         "promotion_history_count": history_count,
         "retrieval_policy": policy,

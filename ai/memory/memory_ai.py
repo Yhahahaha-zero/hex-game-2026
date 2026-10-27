@@ -18,6 +18,7 @@ from ai.memory.schema import RETRIEVAL_VERSION, memory_db_path
 from ai.memory.shadow import ShadowComparison
 from ai.memory.store import ExperienceStore, RetrievalEventRecord
 from ai.memory.trace import json_text
+from ai.memory.trust import MemoryTrustFeatures, load_trust_model
 from ai.tactics import creates_double_threat
 from hex_ai import winning_moves
 from hex_board import BLUE, RED
@@ -59,6 +60,8 @@ class MemoryRetrievalSettings:
     ply_window: int = 6
     retrieval_types: tuple[str, ...] = ("exact", "canonical", "similar")
     policy_file: str | None = None
+    trust_model_file: str | None = None
+    minimum_trust: float = 0.50
 
     @classmethod
     def from_env(cls, *, env_file=None, environ=None):
@@ -101,6 +104,14 @@ class MemoryRetrievalSettings:
                 _env_setting(file_values, env, "HEX_MEMORY_POLICY_FILE", "")
                 or None
             ),
+            trust_model_file=(
+                _env_setting(file_values, env, "HEX_MEMORY_TRUST_MODEL", "")
+                or None
+            ),
+            minimum_trust=max(0.0, min(1.0, _safe_float(
+                _env_setting(file_values, env, "HEX_MEMORY_MIN_TRUST", "0.50"),
+                0.50,
+            ))),
             retrieval_types=(
                 tuple(
                     item.strip().lower()
@@ -148,7 +159,13 @@ class MemoryAssistedAI:
         self.last_memory_advice = None
         self.last_shadow_comparison = None
         self.last_memory_error = None
+        self.last_trust_probability = None
         self.last_explanation = None
+        self.trust_model = None
+        if self.settings.trust_model_file:
+            trust_path = Path(self.settings.trust_model_file).expanduser().resolve()
+            if trust_path.is_file():
+                self.trust_model = load_trust_model(trust_path)
         self.name = f"{getattr(base_ai, 'name', type(base_ai).__name__)}+Memory"
         self.version = str(getattr(base_ai, "version", "1.0.0") or "1.0.0")
         self.model_sha256 = getattr(base_ai, "model_sha256", None)
@@ -220,15 +237,39 @@ class MemoryAssistedAI:
             or creates_double_threat(board, *base_move, player)
         )
 
-    def _assist_move(self, board, player, base_move, advice):
+    def _trust_probability(self, board, player, base_move, advice):
+        if self.trust_model is None or advice is None or not advice.available:
+            return 1.0
+        hits = [
+            hit for hit in advice.hits
+            if hit.mapped_move == advice.recommended_move
+        ]
+        top = hits[0] if hits else (advice.hits[0] if advice.hits else None)
+        evidence = advice.evidence
+        features = MemoryTrustFeatures(
+            similarity=top.similarity if top else 0.0,
+            confidence=advice.confidence,
+            support_count=advice.support_count,
+            vote_share=float(evidence.get("vote_share", 0.0) or 0.0),
+            conflict=bool(evidence.get("conflict", False)),
+            ply=len(board.history) + 1,
+            retrieval_type=top.similarity_type if top else "similar",
+            model_agrees=advice.recommended_move == base_move,
+        )
+        return float(self.trust_model.predict(features))
+
+    def _assist_move(self, board, player, base_move, advice, trust_probability):
         if advice is None or not advice.available:
             return base_move
-        if advice.confidence < self.settings.minimum_confidence:
+        if trust_probability < self.settings.minimum_trust:
+            return base_move
+        calibrated = advice.confidence * trust_probability
+        if calibrated < self.settings.minimum_confidence:
             return base_move
         candidates, _ = self._candidate_rows(board, player, base_move)
         memory_move = advice.recommended_move
         if memory_move not in candidates:
-            if advice.confidence < 0.80:
+            if calibrated < 0.80:
                 return base_move
             candidates.append(memory_move)
         scored = []
@@ -237,7 +278,7 @@ class MemoryAssistedAI:
                 0.70 if move == base_move else max(0.20, 0.68 - 0.04 * index)
             )
             memory_bonus = (
-                self.settings.alpha * advice.confidence
+                self.settings.alpha * calibrated
                 if move == memory_move else 0.0
             )
             scored.append((base_score + memory_bonus, move))
@@ -245,7 +286,8 @@ class MemoryAssistedAI:
         return scored[0][1]
 
     def _log_event(self, store, *, query_position_id, query_ply, advice,
-                   base_move, shadow_move, final_move, elapsed_ms, evidence):
+                   base_move, shadow_move, final_move, elapsed_ms, evidence,
+                   trust_probability=1.0):
         selected_decision_id = None
         similarity = None
         if advice and advice.recommended_move:
@@ -277,6 +319,9 @@ class MemoryAssistedAI:
             evidence_json=json_text(evidence),
             created_at=self._clock(),
             query_ply=query_ply,
+            selection_probability=trust_probability,
+            exploration_epsilon=0.0,
+            policy_version=self.settings.policy_file or RETRIEVAL_VERSION,
         )
         store.save_retrieval_event(event)
 
@@ -296,13 +341,16 @@ class MemoryAssistedAI:
         }
 
     def _build_explanation(self, board, player, base_move, base_reason,
-                           advice, final_move, tactic, elapsed_ms):
+                           advice, final_move, tactic, elapsed_ms,
+                           trust_probability=1.0):
         shadow = self.last_shadow_comparison.as_dict()
         memory_metadata = {
             "mode": self.settings.mode,
             "advice": advice.as_dict() if advice else None,
             "shadow": shadow,
             "elapsed_ms": elapsed_ms,
+            "trust_probability": trust_probability,
+            "trust_model_loaded": self.trust_model is not None,
         }
         moves, _ = self._candidate_rows(board, player, base_move)
         rows = []
@@ -311,7 +359,7 @@ class MemoryAssistedAI:
                 0.70 if move == base_move else max(0.20, 0.68 - 0.04 * index)
             )
             memory_bonus = (
-                self.settings.alpha * advice.confidence
+                self.settings.alpha * advice.confidence * trust_probability
                 if advice and move == advice.recommended_move else 0.0
             )
             rows.append({
@@ -378,13 +426,19 @@ class MemoryAssistedAI:
                 )
                 evidence = advice.as_dict()
             self.last_memory_advice = advice
+            trust_probability = self._trust_probability(
+                board, player, base_move, advice
+            )
+            self.last_trust_probability = trust_probability
             shadow_move = (
                 advice.recommended_move
                 if advice and advice.recommended_move else base_move
             )
             final_move = base_move
             if self.settings.mode == RETRIEVAL_ASSIST:
-                final_move = self._assist_move(board, player, base_move, advice)
+                final_move = self._assist_move(
+                    board, player, base_move, advice, trust_probability
+                )
             elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
             self.last_shadow_comparison = ShadowComparison(
                 base_move=base_move,
@@ -404,6 +458,7 @@ class MemoryAssistedAI:
                     final_move=final_move,
                     elapsed_ms=elapsed_ms,
                     evidence=evidence,
+                    trust_probability=trust_probability,
                 )
             tactic = base_reason
             if advice and advice.recommended_move and self.settings.mode == RETRIEVAL_ASSIST:
@@ -417,6 +472,7 @@ class MemoryAssistedAI:
                 final_move,
                 tactic,
                 elapsed_ms,
+                trust_probability=trust_probability,
             )
             reported_reason = (
                 tactic if self.settings.mode == RETRIEVAL_ASSIST else base_reason

@@ -102,7 +102,8 @@ class MemorySchemaContractTest(unittest.TestCase):
             {
                 "matches", "games", "positions", "decisions", "retrieval_events",
                 "retrieval_outcomes", "memory_jobs", "dataset_versions",
-                "training_runs",
+                "training_runs", "trust_models", "active_learning_queue",
+                "opponent_profiles", "league_runs", "drift_snapshots",
             } <= tables
         )
         self.assertIn("idx_positions_canonical", indexes)
@@ -112,6 +113,10 @@ class MemorySchemaContractTest(unittest.TestCase):
         self.assertIn("idx_outcomes_game", indexes)
         self.assertIn("idx_jobs_status", indexes)
         self.assertIn("idx_training_dataset", indexes)
+        self.assertIn("idx_active_learning_priority", indexes)
+        self.assertIn("idx_trust_models_status", indexes)
+        self.assertIn("idx_league_runs_status", indexes)
+        self.assertIn("idx_drift_created", indexes)
 
     def test_schema_accepts_one_consistent_case(self):
         match_id = new_match_id()
@@ -173,7 +178,7 @@ class MemorySchemaContractTest(unittest.TestCase):
             connection.close()
 
     def test_schema_and_write_rules_are_documented_in_constants(self):
-        self.assertEqual(MEMORY_SCHEMA_VERSION, 4)
+        self.assertEqual(MEMORY_SCHEMA_VERSION, 5)
         self.assertIn("proposal_not_committed", DO_NOT_WRITE_REASONS)
         self.assertIn("move_undone", DO_NOT_WRITE_REASONS)
         self.assertIn("replay_session", DO_NOT_WRITE_REASONS)

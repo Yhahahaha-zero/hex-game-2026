@@ -26,6 +26,8 @@ class PackageReleaseTest(unittest.TestCase):
         self.assertIn("hex_game/ai/memory/memory_ai.py", demo)
         self.assertIn("docs/MEMORY_V2.md", demo)
         self.assertIn("docs/MEMORY_V3.md", demo)
+        self.assertIn("docs/MEMORY_V4.md", demo)
+        self.assertIn("docs/MEMORY_V4.md", demo)
         self.assertIn("models/selected_model.json", demo)
         self.assertIn("models/hex_model_v5.pt", demo)
         self.assertNotIn("hex_game/test_ai.py", demo)
@@ -38,6 +40,8 @@ class PackageReleaseTest(unittest.TestCase):
         self.assertIn("docs/SYSTEM_ARCHITECTURE.png", archive)
         self.assertIn("docs/MEMORY_V2.md", archive)
         self.assertIn("docs/MEMORY_V3.md", archive)
+        self.assertIn("docs/MEMORY_V4.md", archive)
+        self.assertIn("docs/MEMORY_V4.md", archive)
         self.assertNotIn("hex_game/hex_game.py", archive)
 
     def test_demo_archive_excludes_development_assets(self):

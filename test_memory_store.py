@@ -132,10 +132,25 @@ class ExperienceStoreTest(unittest.TestCase):
                 "memory_jobs": 0,
                 "dataset_versions": 0,
                 "training_runs": 0,
+                "trust_models": 0,
+                "active_learning_queue": 0,
+                "opponent_profiles": 0,
+                "league_runs": 0,
+                "drift_snapshots": 0,
+            "trust_models": 0,
+            "active_learning_queue": 0,
+            "opponent_profiles": 0,
+            "league_runs": 0,
+            "drift_snapshots": 0,
             "retrieval_outcomes": 0,
             "memory_jobs": 0,
             "dataset_versions": 0,
             "training_runs": 0,
+            "trust_models": 0,
+            "active_learning_queue": 0,
+            "opponent_profiles": 0,
+            "league_runs": 0,
+            "drift_snapshots": 0,
             })
         finally:
             store.close()
@@ -162,6 +177,11 @@ class ExperienceStoreTest(unittest.TestCase):
             "memory_jobs": 0,
             "dataset_versions": 0,
             "training_runs": 0,
+            "trust_models": 0,
+            "active_learning_queue": 0,
+            "opponent_profiles": 0,
+            "league_runs": 0,
+            "drift_snapshots": 0,
         })
 
     def test_repeated_bundle_is_idempotent(self):
@@ -454,6 +474,11 @@ class ExperienceStoreTest(unittest.TestCase):
             "memory_jobs": 0,
             "dataset_versions": 0,
             "training_runs": 0,
+            "trust_models": 0,
+            "active_learning_queue": 0,
+            "opponent_profiles": 0,
+            "league_runs": 0,
+            "drift_snapshots": 0,
         })
     def test_v1_database_migrates_to_latest_without_data_loss(self):
         bundle = self._bundle()
@@ -476,7 +501,7 @@ class ExperienceStoreTest(unittest.TestCase):
         finally:
             connection.close()
         with ExperienceStore(self.db_path) as migrated:
-            self.assertEqual(migrated.health_check().schema_version, 4)
+            self.assertEqual(migrated.health_check().schema_version, 5)
             self.assertEqual(migrated.get_match(bundle[0].match_id)["capture_mode"], "shadow")
             self.assertEqual(migrated.counts()["decisions"], 1)
 
@@ -494,7 +519,7 @@ class ExperienceStoreTest(unittest.TestCase):
         finally:
             connection.close()
         with ExperienceStore(self.db_path) as migrated:
-            self.assertEqual(migrated.health_check().schema_version, 4)
+            self.assertEqual(migrated.health_check().schema_version, 5)
             self.assertIn("retrieval_events", migrated.counts())
             self.assertEqual(migrated.counts()["decisions"], 1)
 
@@ -507,20 +532,52 @@ class ExperienceStoreTest(unittest.TestCase):
         try:
             for table in (
                 "retrieval_outcomes", "memory_jobs", "dataset_versions",
-                "training_runs",
+                "training_runs", "trust_models", "active_learning_queue",
+                "opponent_profiles", "league_runs", "drift_snapshots",
             ):
                 connection.execute(f"DROP TABLE {table}")
             connection.execute("DROP INDEX IF EXISTS idx_retrieval_query_ply")
             connection.execute("ALTER TABLE retrieval_events DROP COLUMN query_ply")
+            for column in (
+                "selection_probability", "exploration_epsilon", "policy_version",
+            ):
+                connection.execute(f"ALTER TABLE retrieval_events DROP COLUMN {column}")
             connection.execute("PRAGMA user_version = 3")
             connection.commit()
         finally:
             connection.close()
         with ExperienceStore(self.db_path) as migrated:
-            self.assertEqual(migrated.health_check().schema_version, 4)
+            self.assertEqual(migrated.health_check().schema_version, 5)
             self.assertEqual(migrated.counts()["decisions"], 1)
             self.assertEqual(migrated.counts()["memory_jobs"], 0)
             self.assertEqual(migrated.counts()["dataset_versions"], 0)
+
+    def test_v4_database_migrates_to_v5_operational_schema(self):
+        bundle = self._bundle()
+        store = self._open_store()
+        store.save_decision_bundle(*bundle)
+        store.close()
+        connection = sqlite3.connect(self.db_path)
+        try:
+            for table in (
+                "trust_models", "active_learning_queue", "opponent_profiles",
+                "league_runs", "drift_snapshots",
+            ):
+                connection.execute(f"DROP TABLE {table}")
+            for column in (
+                "selection_probability", "exploration_epsilon", "policy_version",
+            ):
+                connection.execute(f"ALTER TABLE retrieval_events DROP COLUMN {column}")
+            connection.execute("PRAGMA user_version = 4")
+            connection.commit()
+        finally:
+            connection.close()
+        with ExperienceStore(self.db_path) as migrated:
+            self.assertEqual(migrated.health_check().schema_version, 5)
+            counts = migrated.counts()
+            self.assertEqual(counts["trust_models"], 0)
+            self.assertEqual(counts["active_learning_queue"], 0)
+            self.assertEqual(counts["decisions"], 1)
 
     def test_retrieval_event_is_idempotent_and_conflict_checked(self):
         record = RetrievalEventRecord(

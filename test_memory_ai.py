@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """V1 memory shadow/assist wrapper and retrieval logging tests."""
+from dataclasses import replace
 import os
 import tempfile
 import unittest
@@ -14,6 +15,7 @@ from ai.memory.memory_ai import (
 )
 from ai.memory.shadow import summarize_shadow_events
 from ai.memory.store import ExperienceStore
+from ai.memory.trust import MemoryTrustFeatures, MemoryTrustModel, save_trust_model
 from hex_board import RED, HexBoard
 from memory_test_support import (
     collect_scripted_match,
@@ -108,6 +110,27 @@ class MemoryAssistedAITest(unittest.TestCase):
         self.assertEqual((events[0]["final_q"], events[0]["final_r"]), (0, 0))
         self.assertEqual(events[0]["applied"], 1)
         self.assertEqual(ai.last_explanation["search_type"], "memory_assist")
+
+    def test_low_trust_model_blocks_assist_override(self):
+        feature_size = len(
+            MemoryTrustFeatures(0, 0, 0, 0, False, 1, "exact", False).vector()
+        )
+        trust_path = Path(self.temp_dir.name) / "trust.json"
+        save_trust_model(
+            trust_path,
+            MemoryTrustModel(weights=[0.0] * feature_size, bias=-20.0, metrics={}),
+        )
+        settings = replace(
+            self._settings("assist"),
+            trust_model_file=str(trust_path),
+            minimum_trust=0.5,
+        )
+        with ExperienceStore(self.db_path) as store:
+            ai = MemoryAssistedAI(ScriptedAI(), settings=settings, store=store)
+            move, _reason = ai.choose_move(HexBoard(), RED)
+        self.assertEqual(move, (5, 5))
+        self.assertLess(ai.last_trust_probability, 0.5)
+        self.assertEqual(ai.last_shadow_comparison.memory_move, (0, 0))
 
     def test_forced_tactic_skips_memory(self):
         board = HexBoard()

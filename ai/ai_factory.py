@@ -1,13 +1,19 @@
 # -*- coding: utf-8 -*-
 """比赛 AI 工厂：默认使用实测更强的 HybridAI。"""
 import os
+from pathlib import Path
 
 from hex_ai import BasicAI
 
 
 def _wrap_memory(ai, warning=None):
     try:
+        from ai.memory.deployment import validate_deployment_manifest
         from ai.memory.memory_ai import wrap_ai_with_memory
+        deployment = os.environ.get("HEX_MEMORY_DEPLOYMENT_MANIFEST", "").strip()
+        if deployment:
+            models_dir = Path(__file__).resolve().parents[2] / "models"
+            validate_deployment_manifest(deployment, models_dir=models_dir)
         return wrap_ai_with_memory(ai), warning
     except Exception as exc:
         message = f"memory retrieval unavailable: {exc}"

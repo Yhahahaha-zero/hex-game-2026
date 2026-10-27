@@ -48,11 +48,84 @@ from ai.memory.store import (
     MemoryJobRecord,
     DatasetVersionRecord,
     TrainingRunRecord,
+    TrustModelRecord,
+    ActiveLearningCandidateRecord,
+    OpponentProfileRecord,
+    LeagueRunRecord,
+    DriftSnapshotRecord,
     StoreWriteResult,
     recover_database,
 )
 
 from ai.memory.features import FEATURE_VERSION, PositionFeatures, extract_features
+from ai.memory.trust import (
+    TRUST_FEATURE_VERSION,
+    MemoryTrustFeatures,
+    MemoryTrustModel,
+    evaluate_trust,
+    load_trust_model,
+    save_trust_model,
+)
+from ai.memory.active_learning import (
+    ActiveLearningScore,
+    persist_candidates,
+    score_candidate,
+    select_candidates,
+)
+from ai.memory.league import (
+    LeagueEntry,
+    OpponentSpec,
+    build_league_table,
+    run_league,
+    update_elo,
+)
+from ai.memory.orchestrator import (
+    LearningOrchestrator,
+    OrchestratorConfig,
+    readiness,
+)
+from ai.memory.drift import DriftThresholds, build_drift_snapshot
+from ai.memory.deployment import (
+    DeploymentError,
+    activate_deployment,
+    build_deployment_manifest,
+    rollback_deployment,
+    validate_deployment_manifest,
+)
+from ai.memory.trust import (
+    TRUST_FEATURE_VERSION,
+    MemoryTrustFeatures,
+    MemoryTrustModel,
+    evaluate_trust,
+    load_trust_model,
+    save_trust_model,
+)
+from ai.memory.active_learning import (
+    ActiveLearningScore,
+    persist_candidates,
+    score_candidate,
+    select_candidates,
+)
+from ai.memory.league import (
+    LeagueEntry,
+    OpponentSpec,
+    build_league_table,
+    run_league,
+    update_elo,
+)
+from ai.memory.orchestrator import (
+    LearningOrchestrator,
+    OrchestratorConfig,
+    readiness,
+)
+from ai.memory.drift import DriftThresholds, build_drift_snapshot
+from ai.memory.deployment import (
+    DeploymentError,
+    activate_deployment,
+    build_deployment_manifest,
+    rollback_deployment,
+    validate_deployment_manifest,
+)
 from ai.memory.dataset_registry import (
     register_dataset_version,
     register_training_run,
@@ -106,6 +179,56 @@ from ai.memory.validator import (
 )
 
 __all__ = [
+    "TRUST_FEATURE_VERSION",
+    "MemoryTrustFeatures",
+    "MemoryTrustModel",
+    "evaluate_trust",
+    "load_trust_model",
+    "save_trust_model",
+    "ActiveLearningScore",
+    "persist_candidates",
+    "score_candidate",
+    "select_candidates",
+    "LeagueEntry",
+    "OpponentSpec",
+    "build_league_table",
+    "run_league",
+    "update_elo",
+    "LearningOrchestrator",
+    "OrchestratorConfig",
+    "readiness",
+    "DriftThresholds",
+    "build_drift_snapshot",
+    "DeploymentError",
+    "activate_deployment",
+    "build_deployment_manifest",
+    "rollback_deployment",
+    "validate_deployment_manifest",
+    "TRUST_FEATURE_VERSION",
+    "MemoryTrustFeatures",
+    "MemoryTrustModel",
+    "evaluate_trust",
+    "load_trust_model",
+    "save_trust_model",
+    "ActiveLearningScore",
+    "persist_candidates",
+    "score_candidate",
+    "select_candidates",
+    "LeagueEntry",
+    "OpponentSpec",
+    "build_league_table",
+    "run_league",
+    "update_elo",
+    "LearningOrchestrator",
+    "OrchestratorConfig",
+    "readiness",
+    "DriftThresholds",
+    "build_drift_snapshot",
+    "DeploymentError",
+    "activate_deployment",
+    "build_deployment_manifest",
+    "rollback_deployment",
+    "validate_deployment_manifest",
     "register_dataset_version",
     "register_training_run",
     "attribute_game_outcomes",
@@ -178,6 +301,16 @@ __all__ = [
     "MemoryJobRecord",
     "DatasetVersionRecord",
     "TrainingRunRecord",
+    "TrustModelRecord",
+    "ActiveLearningCandidateRecord",
+    "OpponentProfileRecord",
+    "LeagueRunRecord",
+    "DriftSnapshotRecord",
+    "TrustModelRecord",
+    "ActiveLearningCandidateRecord",
+    "OpponentProfileRecord",
+    "LeagueRunRecord",
+    "DriftSnapshotRecord",
     "StoreWriteResult",
     "TransformedPosition",
     "build_decision_id",

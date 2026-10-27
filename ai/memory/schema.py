@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 
-MEMORY_SCHEMA_VERSION = 4
+MEMORY_SCHEMA_VERSION = 5
 RULES_VERSION = 1
 FEATURE_VERSION = 1
 COLLECTOR_VERSION = "1.0.0"
@@ -31,6 +31,8 @@ RETRIEVAL_MODES = ("shadow", "assist", "exact", "canonical", "similar")
 MEMORY_TABLES = (
     "matches", "games", "positions", "decisions", "retrieval_events",
     "retrieval_outcomes", "memory_jobs", "dataset_versions", "training_runs",
+    "trust_models", "active_learning_queue", "opponent_profiles", "league_runs",
+    "drift_snapshots",
 )
 MEMORY_INDEXES = (
     "idx_positions_canonical",
@@ -46,6 +48,10 @@ MEMORY_INDEXES = (
     "idx_jobs_status",
     "idx_training_dataset",
     "idx_retrieval_query_ply",
+    "idx_active_learning_priority",
+    "idx_trust_models_status",
+    "idx_league_runs_status",
+    "idx_drift_created",
 )
 TABLE_COLUMNS = {
     "matches": (
@@ -72,6 +78,7 @@ TABLE_COLUMNS = {
         "base_q", "base_r", "shadow_q", "shadow_r", "final_q", "final_r",
         "confidence", "applied", "feature_version", "retrieval_version",
         "elapsed_ms", "evidence_json", "created_at", "query_ply",
+        "selection_probability", "exploration_epsilon", "policy_version",
     ),
     "retrieval_outcomes": (
         "retrieval_event_id", "game_id", "decision_id", "applied",
@@ -91,6 +98,26 @@ TABLE_COLUMNS = {
         "training_run_id", "dataset_id", "parent_model_sha256",
         "candidate_model_sha256", "status", "metrics_json",
         "started_at", "finished_at",
+    ),
+    "trust_models": (
+        "trust_model_id", "model_path", "sha256", "feature_version",
+        "metrics_json", "status", "created_at",
+    ),
+    "active_learning_queue": (
+        "candidate_id", "position_id", "decision_id", "priority",
+        "reason_json", "selected", "dataset_id", "created_at",
+    ),
+    "opponent_profiles": (
+        "opponent_id", "ai_name", "ai_version", "model_sha256", "elo",
+        "metrics_json", "created_at",
+    ),
+    "league_runs": (
+        "league_run_id", "candidate_sha256", "status", "metrics_json",
+        "started_at", "finished_at",
+    ),
+    "drift_snapshots": (
+        "snapshot_id", "window_start", "window_end", "metrics_json",
+        "alerts_json", "created_at",
     ),
     "decisions": (
         "decision_id", "game_id", "position_id", "ply", "actor_type",
@@ -231,6 +258,9 @@ TABLE_DDL = (
         evidence_json TEXT,
         created_at TEXT NOT NULL,
         query_ply INTEGER,
+        selection_probability REAL,
+        exploration_epsilon REAL,
+        policy_version TEXT,
         FOREIGN KEY(selected_memory_decision_id)
             REFERENCES decisions(decision_id),
         CHECK(retrieval_mode IN (
@@ -296,6 +326,60 @@ TABLE_DDL = (
         finished_at TEXT,
         FOREIGN KEY(dataset_id) REFERENCES dataset_versions(dataset_id),
         CHECK(status IN ('running','completed','failed','cancelled'))
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS trust_models (
+        trust_model_id TEXT PRIMARY KEY,
+        model_path TEXT NOT NULL,
+        sha256 TEXT NOT NULL,
+        feature_version INTEGER NOT NULL,
+        metrics_json TEXT,
+        status TEXT NOT NULL CHECK(status IN ('candidate','selected','rejected','rolled_back')),
+        created_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS active_learning_queue (
+        candidate_id TEXT PRIMARY KEY,
+        position_id TEXT NOT NULL,
+        decision_id TEXT NOT NULL,
+        priority REAL NOT NULL,
+        reason_json TEXT,
+        selected INTEGER NOT NULL DEFAULT 0 CHECK(selected IN (0,1)),
+        dataset_id TEXT,
+        created_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS opponent_profiles (
+        opponent_id TEXT PRIMARY KEY,
+        ai_name TEXT NOT NULL,
+        ai_version TEXT,
+        model_sha256 TEXT,
+        elo REAL,
+        metrics_json TEXT,
+        created_at TEXT NOT NULL
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS league_runs (
+        league_run_id TEXT PRIMARY KEY,
+        candidate_sha256 TEXT,
+        status TEXT NOT NULL,
+        metrics_json TEXT,
+        started_at TEXT NOT NULL,
+        finished_at TEXT
+    );
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS drift_snapshots (
+        snapshot_id TEXT PRIMARY KEY,
+        window_start TEXT NOT NULL,
+        window_end TEXT NOT NULL,
+        metrics_json TEXT NOT NULL,
+        alerts_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
     );
     """,
 )
@@ -442,6 +526,72 @@ MIGRATION_DDL = {
             "ON retrieval_events(query_game_id, query_ply);"
         ),
     ),
+    4: (
+        "ALTER TABLE retrieval_events ADD COLUMN selection_probability REAL;",
+        "ALTER TABLE retrieval_events ADD COLUMN exploration_epsilon REAL;",
+        "ALTER TABLE retrieval_events ADD COLUMN policy_version TEXT;",
+        """
+        CREATE TABLE IF NOT EXISTS trust_models (
+            trust_model_id TEXT PRIMARY KEY,
+            model_path TEXT NOT NULL,
+            sha256 TEXT NOT NULL,
+            feature_version INTEGER NOT NULL,
+            metrics_json TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS active_learning_queue (
+            candidate_id TEXT PRIMARY KEY,
+            position_id TEXT NOT NULL,
+            decision_id TEXT NOT NULL,
+            priority REAL NOT NULL,
+            reason_json TEXT,
+            selected INTEGER NOT NULL DEFAULT 0,
+            dataset_id TEXT,
+            created_at TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS opponent_profiles (
+            opponent_id TEXT PRIMARY KEY,
+            ai_name TEXT NOT NULL,
+            ai_version TEXT,
+            model_sha256 TEXT,
+            elo REAL,
+            metrics_json TEXT,
+            created_at TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS league_runs (
+            league_run_id TEXT PRIMARY KEY,
+            candidate_sha256 TEXT,
+            status TEXT NOT NULL,
+            metrics_json TEXT,
+            started_at TEXT NOT NULL,
+            finished_at TEXT
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS drift_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            window_start TEXT NOT NULL,
+            window_end TEXT NOT NULL,
+            metrics_json TEXT NOT NULL,
+            alerts_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        """,
+        (
+            "CREATE INDEX IF NOT EXISTS idx_active_learning_priority "
+            "ON active_learning_queue(selected, priority DESC);"
+        ),
+        "CREATE INDEX IF NOT EXISTS idx_trust_models_status ON trust_models(status, created_at);",
+        "CREATE INDEX IF NOT EXISTS idx_league_runs_status ON league_runs(status, started_at);",
+        "CREATE INDEX IF NOT EXISTS idx_drift_created ON drift_snapshots(created_at);",
+    ),
 }
 
 INDEX_DDL = (
@@ -466,6 +616,13 @@ INDEX_DDL = (
         "ON retrieval_events(applied, retrieval_mode);"
     ),
     "CREATE INDEX IF NOT EXISTS idx_retrieval_created ON retrieval_events(created_at);",
+    (
+        "CREATE INDEX IF NOT EXISTS idx_active_learning_priority "
+        "ON active_learning_queue(selected, priority DESC);"
+    ),
+    "CREATE INDEX IF NOT EXISTS idx_trust_models_status ON trust_models(status, created_at);",
+    "CREATE INDEX IF NOT EXISTS idx_league_runs_status ON league_runs(status, started_at);",
+    "CREATE INDEX IF NOT EXISTS idx_drift_created ON drift_snapshots(created_at);",
     (
         "CREATE INDEX IF NOT EXISTS idx_outcomes_game "
         "ON retrieval_outcomes(game_id);"
