@@ -40,6 +40,10 @@ class LLMConfig:
     temperature: float = 0.1
     enable_thinking: bool = False
     analysis_timeout_seconds: float = 30.0
+    fusion_mode: str = "analysis_only"
+    fusion_alpha: float = 0.0
+    fusion_candidates: int = 8
+    cache_enabled: bool = True
 
     @property
     def key_configured(self) -> bool:
@@ -69,6 +73,10 @@ class LLMConfig:
             "temperature": self.temperature,
             "enable_thinking": self.enable_thinking,
             "analysis_timeout_seconds": self.analysis_timeout_seconds,
+            "fusion_mode": self.fusion_mode,
+            "fusion_alpha": self.fusion_alpha,
+            "fusion_candidates": self.fusion_candidates,
+            "cache_enabled": self.cache_enabled,
         }
 
 
@@ -214,6 +222,28 @@ def load_llm_config(env_file=None, environ=None) -> LLMConfig:
     if not 5.0 <= analysis_timeout_seconds <= 120.0:
         raise LLMConfigError("LLM_ANALYSIS_TIMEOUT_SECONDS 必须在 5 到 120 秒之间")
 
+    fusion_mode = _setting(
+        file_values, env, "LLM_FUSION_MODE", "analysis_only"
+    ).lower()
+    if fusion_mode not in {"analysis_only", "rerank"}:
+        raise LLMConfigError("LLM_FUSION_MODE 必须是 analysis_only 或 rerank")
+    fusion_alpha = _parse_float(
+        _setting(file_values, env, "LLM_FUSION_ALPHA", "0"),
+        "LLM_FUSION_ALPHA",
+    )
+    if not 0.0 <= fusion_alpha <= 1.0:
+        raise LLMConfigError("LLM_FUSION_ALPHA 必须在 0 到 1 之间")
+    fusion_candidates = _parse_int(
+        _setting(file_values, env, "LLM_FUSION_CANDIDATES", "8"),
+        "LLM_FUSION_CANDIDATES",
+    )
+    if not 2 <= fusion_candidates <= 8:
+        raise LLMConfigError("LLM_FUSION_CANDIDATES 必须在 2 到 8 之间")
+    cache_enabled = _parse_bool(
+        _setting(file_values, env, "LLM_CACHE_ENABLED", "1"),
+        "LLM_CACHE_ENABLED",
+    )
+
     enable_thinking = _parse_bool(
         _setting(file_values, env, "LLM_ENABLE_THINKING", "0"),
         "LLM_ENABLE_THINKING",
@@ -237,4 +267,8 @@ def load_llm_config(env_file=None, environ=None) -> LLMConfig:
         temperature=temperature,
         enable_thinking=enable_thinking,
         analysis_timeout_seconds=analysis_timeout_seconds,
+        fusion_mode=fusion_mode,
+        fusion_alpha=fusion_alpha,
+        fusion_candidates=fusion_candidates,
+        cache_enabled=cache_enabled,
     )

@@ -29,6 +29,10 @@ class LLMConfigTest(unittest.TestCase):
         self.assertFalse(config.key_configured)
         self.assertFalse(config.enable_thinking)
         self.assertEqual(config.analysis_timeout_seconds, 30.0)
+        self.assertEqual(config.fusion_mode, "analysis_only")
+        self.assertEqual(config.fusion_alpha, 0.0)
+        self.assertEqual(config.fusion_candidates, 8)
+        self.assertTrue(config.cache_enabled)
         self.assertEqual(config.analysis_model, "qwen3.8-flash")
         self.assertEqual(config.vision_model, "qwen3-vl-plus")
 
@@ -48,6 +52,10 @@ class LLMConfigTest(unittest.TestCase):
                 LLM_MAX_OUTPUT_TOKENS=1000
                 LLM_TEMPERATURE=0.1
                 LLM_ENABLE_THINKING=1
+                LLM_FUSION_MODE=rerank
+                LLM_FUSION_ALPHA=0.2
+                LLM_FUSION_CANDIDATES=6
+                LLM_CACHE_ENABLED=0
                 """,
             )
             config = load_llm_config(path, environ={})
@@ -55,6 +63,10 @@ class LLMConfigTest(unittest.TestCase):
         self.assertTrue(config.enabled)
         self.assertTrue(config.key_configured)
         self.assertTrue(config.enable_thinking)
+        self.assertEqual(config.fusion_mode, "rerank")
+        self.assertEqual(config.fusion_alpha, 0.2)
+        self.assertEqual(config.fusion_candidates, 6)
+        self.assertFalse(config.cache_enabled)
         self.assertEqual(config.api_key, "test-secret")
         self.assertEqual(config.base_url, "https://example.test/v1")
         self.assertEqual(
@@ -119,6 +131,9 @@ class LLMConfigTest(unittest.TestCase):
         cases = (
             ("LLM_ENABLED=maybe", "LLM_ENABLED"),
             ("LLM_ENABLED=0\nLLM_ENABLE_THINKING=maybe", "LLM_ENABLE_THINKING"),
+            ("LLM_ENABLED=0\nLLM_FUSION_MODE=invalid", "LLM_FUSION_MODE"),
+            ("LLM_ENABLED=0\nLLM_FUSION_ALPHA=2", "LLM_FUSION_ALPHA"),
+            ("LLM_ENABLED=0\nLLM_FUSION_CANDIDATES=1", "LLM_FUSION_CANDIDATES"),
             ("LLM_ENABLED=0\nLLM_PROVIDER=unknown", "LLM_PROVIDER"),
             ("LLM_ENABLED=0\nLLM_BASE_URL=ftp://example.test", "LLM_BASE_URL"),
             ("LLM_ENABLED=0\nLLM_TIMEOUT_SECONDS=0", "LLM_TIMEOUT_SECONDS"),

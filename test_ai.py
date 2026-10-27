@@ -100,5 +100,29 @@ class AIContractTest(unittest.TestCase):
                 NeuralMCTSAI(model_path=missing)
 
 
+    def test_hybrid_llm_factory_falls_back_when_disabled(self):
+        import os
+        from unittest.mock import patch
+
+        with patch.dict(os.environ, {"LLM_ENABLED": "0"}):
+            ai, error = create_competition_ai("hybrid_llm")
+        self.assertIsInstance(ai, HybridAI)
+        self.assertIn("LLM_ENABLED=0", error)
+
+    def test_hybrid_llm_factory_creates_experimental_wrapper(self):
+        import os
+        from unittest.mock import patch
+        from ai.ai_coordinator import LLMAssistedAI
+
+        env = {
+            "LLM_ENABLED": "1",
+            "LLM_API_KEY": "test-key",
+            "LLM_BASE_URL": "https://example.test/v1",
+        }
+        with patch.dict(os.environ, env):
+            ai, error = create_competition_ai("hybrid_llm")
+        self.assertIsInstance(ai, LLMAssistedAI)
+        self.assertIsNone(error)
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

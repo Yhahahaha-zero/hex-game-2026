@@ -36,7 +36,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from hex_ai import create_ai
 from hex_match import play_game
 
-BUILTIN_AIS = ("basic", "random", "neural", "hybrid", "strategic")
+BUILTIN_AIS = ("basic", "random", "neural", "hybrid", "hybrid_llm", "strategic")
 DEFAULT_OUTPUT_DIR = str(PROJECT_ROOT.parent / "evaluation" / "benchmark_results")
 DEFAULT_GAMES = 500
 DEFAULT_SEED = 20261024
@@ -57,6 +57,15 @@ def load_ai_factory(spec):
             from ai.hybrid_ai import HybridAI
             return HybridAI()
         return hybrid_factory
+
+    if spec == "hybrid_llm":
+        def hybrid_llm_factory():
+            from ai.ai_factory import create_competition_ai
+            ai, error = create_competition_ai("hybrid_llm")
+            if error:
+                raise RuntimeError(error)
+            return ai
+        return hybrid_llm_factory
 
     if spec == "strategic" or spec.startswith("strategic:"):
         variant = spec.split(":", 1)[1] if ":" in spec else "full"

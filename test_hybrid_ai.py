@@ -95,5 +95,17 @@ class HybridAITest(unittest.TestCase):
         self.assertEqual(board.history, before_history)
 
 
+    def test_analysis_candidates_preserve_selected_move_and_limit(self):
+        board = HexBoard()
+        board.place(5, 5, RED)
+        ai = HybridAI(time_limit=0.08, seed=4)
+        move, _ = ai.choose_move(board, 2)
+        candidates = ai.analysis_candidates(limit=8)
+        self.assertLessEqual(len(candidates), 8)
+        self.assertEqual(candidates[0]["move"], move)
+        self.assertEqual(candidates[0]["base_rank"], 1)
+        self.assertIn("base_score_type", candidates[0])
+        self.assertTrue(all(board.is_empty(*item["move"]) for item in candidates))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

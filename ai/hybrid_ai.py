@@ -235,6 +235,7 @@ class HybridAI:
         self.rng = random.Random(seed)
         self._cancel_event = None
         self.last_explanation = None
+        self.analysis_candidate_limit = 8
 
     def set_seed(self, seed):
         self.rng.seed(seed)
@@ -256,7 +257,7 @@ class HybridAI:
             if move in moves:
                 moves.remove(move)
                 moves.insert(0, move)
-            for cell in moves[:5]:
+            for cell in moves[:8]:
                 visits, wins = stats[cell]
                 candidate_rows.append({
                     "move": cell,
@@ -266,7 +267,12 @@ class HybridAI:
                 })
             score_type = "蒙特卡洛胜率"
         elif ranked:
-            for score, cell in ranked[:5]:
+            ordered_ranked = list(ranked)
+            for index, (_, cell) in enumerate(ordered_ranked):
+                if cell == move:
+                    ordered_ranked.insert(0, ordered_ranked.pop(index))
+                    break
+            for score, cell in ordered_ranked[:8]:
                 candidate_rows.append({
                     "move": cell,
                     "score": round(float(score), 4),
@@ -285,6 +291,31 @@ class HybridAI:
             score_type=score_type,
             metadata=dict(metadata or {}),
         )
+
+    def analysis_candidates(self, limit=None):
+        """Return a read-only candidate snapshot for optional LLM ranking."""
+        explanation = self.last_explanation
+        if explanation is None:
+            return ()
+        requested = self.analysis_candidate_limit if limit is None else int(limit)
+        requested = max(1, min(8, requested))
+        rows = []
+        for rank, item in enumerate(explanation.candidates[:requested], 1):
+            move = item.get("move")
+            if not isinstance(move, tuple) or len(move) != 2:
+                try:
+                    move = tuple(move)
+                except TypeError:
+                    continue
+            rows.append({
+                "move": move,
+                "base_rank": rank,
+                "base_score": item.get("score"),
+                "base_score_type": explanation.score_type,
+                "reason": item.get("reason", explanation.tactic),
+                "visits": item.get("visits"),
+            })
+        return tuple(rows)
 
     def choose_move(self, board, player):
         started = time.perf_counter()

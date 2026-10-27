@@ -29,6 +29,7 @@ DISPLAY_NAMES = {
     "basic": "BasicAI",
     "strategic": "StrategicAI",
     "hybrid": "HybridAI",
+    "hybrid_llm": "HybridAI+LLM",
     "neural": "NeuralMCTS-official",
     "neural:../models/hex_model_v5_reference.pt": "NeuralMCTS-reference",
 }
