@@ -53,6 +53,15 @@ OUTPUT_SCHEMA_PROMPT = """请严格按照以下 JSON 结构输出：
 5. 不得输出 JSON 之外的任何文字。"""
 
 
+TERMINAL_REVIEW_PROMPT = """当前对局已经结束，请进行最终局面复盘：
+1. priority 使用 balanced。
+2. threats 必须为空数组。
+3. candidate_analysis 必须为空数组。
+4. recommended_move 必须为 null。
+5. summary 只说明胜负结果、获胜连接和当前局面，不得建议继续落子。
+6. warnings 可以用来说明这是终局复盘。"""
+
+
 def build_advisor_messages(observation):
     """Build deterministic system and user messages from an observation."""
     if not isinstance(observation, dict):
@@ -64,8 +73,16 @@ def build_advisor_messages(observation):
         encoded_observation = observation_json(observation)
     except (TypeError, ValueError) as exc:
         raise AnalysisValidationError("observation 无法序列化为 JSON") from exc
+
+    terminal = bool(observation.get("is_terminal")) or observation.get("state") in (
+        "game_over", "match_over"
+    )
+    terminal_rules = (
+        "\n\n" + TERMINAL_REVIEW_PROMPT if terminal else ""
+    )
     prompt = (
         OUTPUT_SCHEMA_PROMPT
+        + terminal_rules
         + "\n\n当前棋局观察数据：\n"
         + encoded_observation
     )

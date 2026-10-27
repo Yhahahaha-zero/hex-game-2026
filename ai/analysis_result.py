@@ -71,6 +71,8 @@ class AnalysisResult:
     position_id: str
     summary: str
     priority: str
+    game_state: str = ""
+    is_terminal: bool = False
     threats: tuple[ThreatAnalysis, ...] = ()
     candidates: tuple[CandidateAnalysis, ...] = ()
     recommended_move: tuple[int, int] | None = None
@@ -85,6 +87,8 @@ class AnalysisResult:
             "schema_version": self.schema_version,
             "prompt_version": self.prompt_version,
             "position_id": self.position_id,
+            "game_state": self.game_state,
+            "is_terminal": self.is_terminal,
             "summary": self.summary,
             "priority": self.priority,
             "threats": [item.as_dict() for item in self.threats],
@@ -209,6 +213,10 @@ def parse_analysis_payload(payload, observation, *, model_name="", elapsed_ms=0.
         raise AnalysisValidationError("模型分析结果与当前局面不一致")
 
     warnings = []
+    game_state = str(observation.get("state", ""))
+    terminal = bool(observation.get("is_terminal")) or game_state in (
+        "game_over", "match_over"
+    )
     summary = _clean_text(
         payload.get("summary"), "summary", MAX_SUMMARY_CHARS,
         warnings, required=True,
@@ -223,6 +231,9 @@ def parse_analysis_payload(payload, observation, *, model_name="", elapsed_ms=0.
     if len(raw_threats) > MAX_THREATS:
         _append_warning(warnings, "威胁数量过多，仅保留前 8 条")
     threats = []
+    if terminal and raw_threats:
+        _append_warning(warnings, "对局已结束，忽略威胁分析")
+        raw_threats = []
     seen_threats = set()
     for item in raw_threats[:MAX_THREATS]:
         if not isinstance(item, dict):
@@ -252,6 +263,9 @@ def parse_analysis_payload(payload, observation, *, model_name="", elapsed_ms=0.
         _append_warning(warnings, "候选分析过多，仅保留前 8 条")
     rows, candidate_moves = _empty_and_candidates(observation)
     candidates = []
+    if terminal and raw_candidates:
+        _append_warning(warnings, "对局已结束，忽略候选落子分析")
+        raw_candidates = []
     seen_candidates = set()
     for item in raw_candidates[:MAX_CANDIDATES]:
         if not isinstance(item, dict):
@@ -279,6 +293,8 @@ def parse_analysis_payload(payload, observation, *, model_name="", elapsed_ms=0.
         ))
 
     recommended_move = _parse_move(payload.get("recommended_move"))
+    if terminal and payload.get("recommended_move") is not None:
+        _append_warning(warnings, "对局已结束，推荐着法已清空")
     if recommended_move is not None:
         if (recommended_move not in candidate_moves
                 or not _move_is_empty(rows, recommended_move)):
@@ -310,6 +326,8 @@ def parse_analysis_payload(payload, observation, *, model_name="", elapsed_ms=0.
         schema_version=ANALYSIS_SCHEMA_VERSION,
         prompt_version=str(prompt_version),
         position_id=expected_position,
+        game_state=game_state,
+        is_terminal=terminal,
         summary=summary,
         priority=priority,
         threats=tuple(threats),

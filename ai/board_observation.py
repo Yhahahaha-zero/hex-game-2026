@@ -310,7 +310,11 @@ def build_board_observation(
     move_count = len(board.history)
     current_key = _normalize_color_argument(current_color)
     winner_key = _normalize_color_argument(winner_color)
-    candidate_rows = _candidate_rows(board, player, candidates, candidate_limit)
+    terminal = state in ("game_over", "match_over")
+    candidate_rows = (
+        [] if terminal else
+        _candidate_rows(board, player, candidates, candidate_limit)
+    )
     empty_count = sum(
         1 for row in board.grid for value in row if value == EMPTY
     )
@@ -324,6 +328,7 @@ def build_board_observation(
         "move_count": move_count,
         "next_move_no": move_count + 1,
         "state": state,
+        "is_terminal": terminal,
         "analysis_color": _COLOR_NAMES[player],
         "current_color": current_key,
         "current_player": sides.get(current_key) if current_key else None,

@@ -241,6 +241,24 @@ class LLMAdvisorTest(unittest.TestCase):
         self.assertEqual(call["max_tokens"], 64)
         self.assertFalse(call["enable_thinking"])
 
+    def test_terminal_observation_forces_final_review_without_moves(self):
+        terminal = copy.deepcopy(self.observation)
+        terminal["state"] = "game_over"
+        terminal["is_terminal"] = True
+        terminal["candidates"] = []
+        prompt = build_advisor_messages(terminal)[1]["content"]
+        self.assertIn("candidate_analysis 必须为空数组", prompt)
+        self.assertIn("recommended_move 必须为 null", prompt)
+
+        payload = dict(self.payload)
+        payload["priority"] = "win"
+        result = parse_analysis_text(json.dumps(payload), terminal)
+        self.assertTrue(result.is_terminal)
+        self.assertEqual(result.game_state, "game_over")
+        self.assertEqual(result.threats, ())
+        self.assertEqual(result.candidates, ())
+        self.assertIsNone(result.recommended_move)
+        self.assertTrue(any("对局已结束" in item for item in result.warnings))
     def test_oversized_prompt_is_rejected(self):
         observation = copy.deepcopy(self.observation)
         observation["unexpected_large_field"] = "x" * 31_000

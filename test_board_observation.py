@@ -137,6 +137,8 @@ class BoardObservationTest(unittest.TestCase):
         observation = build_engine_observation(engine)
 
         self.assertEqual(observation["state"], "game_over")
+        self.assertTrue(observation["is_terminal"])
+        self.assertEqual(observation["candidates"], [])
         self.assertEqual(observation["analysis_color"], "BLUE")
         self.assertIsNone(observation["current_color"])
         self.assertEqual(observation["winner_color"], "BLUE")

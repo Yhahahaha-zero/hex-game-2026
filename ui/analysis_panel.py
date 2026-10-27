@@ -158,9 +158,11 @@ class AnalysisPanel:
                        self.title_font, theme.DIM_CLR)
             return
 
+        terminal = bool(data.get("is_terminal"))
         summary = str(data.get("summary", ""))
         priority = PRIORITY_LABELS.get(data.get("priority"), data.get("priority", ""))
-        self._text(screen, f"局势摘要 · {priority}", (left, top),
+        summary_title = "最终局面复盘" if terminal else f"局势摘要 · {priority}"
+        self._text(screen, summary_title, (left, top),
                    self.body_font, theme.GOLD_DEEP)
         y = top + 30
         y = self._draw_lines(
@@ -170,7 +172,7 @@ class AnalysisPanel:
         y += 14
 
         threats = list(data.get("threats", ()))
-        if threats and y < bottom - 150:
+        if threats and not terminal and y < bottom - 150:
             self._text(screen, "关键威胁", (left, y), self.body_font, theme.GOLD_DEEP)
             y += 6
             y += 26
@@ -189,7 +191,7 @@ class AnalysisPanel:
             y += 10
 
         candidates = list(data.get("candidates", ()))
-        if candidates and y < bottom - 105:
+        if candidates and not terminal and y < bottom - 105:
             self._text(screen, "候选分析", (left, y), self.body_font, theme.GOLD_DEEP)
             y += 6
             y += 26
@@ -211,6 +213,13 @@ class AnalysisPanel:
             y += 8
 
         warnings = list(data.get("warnings", ()))
+        if terminal and y < bottom - 45:
+            y = self._draw_lines(
+                screen, "本局已经结束，以上内容仅用于赛后复盘。",
+                (left, y), content_width, self.small_font,
+                theme.DIM_CLR, 2,
+            )
+            y += 8
         if warnings and y < bottom - 45:
             self._text(screen, "提示", (left, y), self.body_font, theme.GOLD_DEEP)
             y += 24
