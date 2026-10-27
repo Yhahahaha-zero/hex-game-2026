@@ -49,6 +49,20 @@ from ai.memory.store import (
 )
 
 from ai.memory.features import FEATURE_VERSION, PositionFeatures, extract_features
+from ai.memory.dataset import (
+    DATASET_SCHEMA_VERSION,
+    DatasetExport,
+    build_memory_dataset,
+    load_memory_dataset,
+    split_match_ids,
+)
+from ai.memory.model_registry import (
+    ModelPromotionError,
+    PromotionGate,
+    evaluate_promotion_gate,
+    promote_candidate,
+    rollback_selected_model,
+)
 from ai.memory.retrieval import MemoryAdvice, MemoryHit, MemoryRetriever
 from ai.memory.shadow import ShadowComparison, summarize_shadow_events
 from ai.memory.memory_ai import (
@@ -65,6 +79,16 @@ from ai.memory.validator import (
 )
 
 __all__ = [
+    "DATASET_SCHEMA_VERSION",
+    "DatasetExport",
+    "build_memory_dataset",
+    "load_memory_dataset",
+    "split_match_ids",
+    "ModelPromotionError",
+    "PromotionGate",
+    "evaluate_promotion_gate",
+    "promote_candidate",
+    "rollback_selected_model",
     "FEATURE_VERSION",
     "MemoryAdvice",
     "MemoryHit",

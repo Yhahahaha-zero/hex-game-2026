@@ -97,6 +97,10 @@ def _demo_code_files(workspace_root):
             files.append(path)
     for folder in ("ui",):
         files.extend(path for path in (code_root / folder).glob("*.py") if path.is_file())
+    memory_root = code_root / "ai" / "memory"
+    files.extend(
+        path for path in memory_root.glob("*.py") if path.is_file()
+    )
     for name in ("__init__.py", "check_model.py"):
         path = code_root / "tools" / name
         if path.is_file():
@@ -127,7 +131,8 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
             _add(entries, workspace_root, path)
         for name in (
             "README.md", "docs/MODEL_AND_CHECKPOINTS.md", "docs/HEX_NOTATION.md",
-            "docs/RECORDS.md", "docs/REPORTS.md",
+            "docs/RECORDS.md", "docs/REPORTS.md", "docs/MEMORY_INTERFACE.md",
+            "docs/MEMORY_V1.md", "docs/MEMORY_V2.md", "hex_game/.env.example",
         ):
             _add(entries, workspace_root, workspace_root / name)
     elif profile == "archive":
@@ -140,6 +145,8 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
             "docs/SYSTEM_ARCHITECTURE.mmd", "docs/SYSTEM_ARCHITECTURE.md",
             "docs/MODEL_AND_CHECKPOINTS.md", "docs/AI_EVALUATION.md",
             "docs/P1_EVALUATION.md", "docs/TESTING.md",
+            "docs/MEMORY_INTERFACE.md", "docs/MEMORY_V1.md",
+            "docs/MEMORY_V2.md",
         ):
             _add(entries, workspace_root, workspace_root / name)
 

@@ -301,7 +301,14 @@ class MemoryRetriever:
         )
         conflict = len(ranked) > 1 and ranked[1][1]["votes"] >= best["votes"] * 0.75
         recommended = (
-            move if support >= minimum_support and vote_share >= 0.60 and not conflict
+            move
+            if (
+                support >= minimum_support
+                and vote_share >= 0.60
+                and not conflict
+                and win_rate is not None
+                and win_rate >= 0.50
+            )
             else None
         )
         support_factor = min(1.0, support / max(1, minimum_support))

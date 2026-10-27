@@ -69,7 +69,8 @@ class MemoryRetrievalTest(unittest.TestCase):
         ]
         self.assertTrue(canonical_hits)
         self.assertIn((0, 0), {hit.mapped_move for hit in canonical_hits})
-        self.assertEqual(advice.recommended_move, (0, 0))
+        self.assertIsNone(advice.recommended_move)
+        self.assertEqual(advice.win_rate, 0.0)
 
     def test_retrieval_type_ablation_filters_exact_hits(self):
         with ExperienceStore(self.db_path) as store:

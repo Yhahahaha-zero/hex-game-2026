@@ -1191,6 +1191,31 @@ class ExperienceStore:
                 raise _translate_database_error(exc) from exc
         return [dict(row) for row in rows]
 
+    def query_training_samples(self, *, limit=1000000):
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise MemoryValidationError("limit must be a positive integer")
+        query = (
+            "SELECT d.*, p.board_json, p.current_color, "
+            "p.ply AS position_ply, g.match_id, g.game_no "
+            "FROM decisions d "
+            "JOIN positions p ON p.position_id = d.position_id "
+            "JOIN games g ON g.game_id = d.game_id "
+            "WHERE d.training_eligible = 1 "
+            "AND d.decision_quality = 'validated' "
+            "AND d.actor_type = 'ai' "
+            "AND d.chosen_q IS NOT NULL AND d.chosen_r IS NOT NULL "
+            "AND d.result IS NOT NULL "
+            "ORDER BY g.match_id, g.game_no, d.ply, d.decision_id "
+            "LIMIT ?"
+        )
+        with self._lock:
+            connection = self._require_connection_unlocked()
+            try:
+                rows = connection.execute(query, (limit,)).fetchall()
+            except sqlite3.DatabaseError as exc:
+                raise _translate_database_error(exc) from exc
+        return [dict(row) for row in rows]
+
     def query_validated_memory(self, *, current_color, ply, feature_version,
                                ply_window=6, exclude_match_id=None,
                                exclude_game_id=None, limit=2000):
