@@ -21,12 +21,14 @@ class PackageReleaseTest(unittest.TestCase):
         self.assertIn("hex_game/ai/train_v5.py", dev)
         self.assertIn("models/hex_model_v5_reference.pt", dev)
 
+        self.assertIn("hex_game/competition_profile.json", demo)
         self.assertIn("hex_game/hex_game.py", demo)
         self.assertIn("hex_game/ai/encode.py", demo)
         self.assertIn("hex_game/ai/memory/memory_ai.py", demo)
         self.assertIn("docs/MEMORY_V2.md", demo)
         self.assertIn("docs/MEMORY_V3.md", demo)
         self.assertIn("docs/MEMORY_V4.md", demo)
+        self.assertIn("docs/COMPETITION_PROFILE.md", demo)
         self.assertIn("models/selected_model.json", demo)
         self.assertIn("models/hex_model_v5.pt", demo)
         self.assertNotIn("hex_game/test_ai.py", demo)
@@ -40,6 +42,8 @@ class PackageReleaseTest(unittest.TestCase):
         self.assertIn("docs/MEMORY_V2.md", archive)
         self.assertIn("docs/MEMORY_V3.md", archive)
         self.assertIn("docs/MEMORY_V4.md", archive)
+        self.assertIn("docs/COMPETITION_PROFILE.md", archive)
+        self.assertIn("hex_game/competition_profile.json", archive)
         self.assertNotIn("hex_game/hex_game.py", archive)
 
     def test_demo_archive_excludes_development_assets(self):

@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """固定对手池交叉评测工具测试。"""
 import csv
 import json
@@ -27,8 +27,12 @@ def fake_summary(ai_a, ai_b, index):
         "ai_a_win_rate_ci95_low": 10.0,
         "ai_a_win_rate_ci95_high": 90.0,
         "average_moves": 20.0,
+        "ai_a_p50_move_ms": 3.0,
         "ai_a_p95_move_ms": 5.0,
+        "ai_a_p99_move_ms": 6.0,
+        "ai_b_p50_move_ms": 4.0,
         "ai_b_p95_move_ms": 7.0,
+        "ai_b_p99_move_ms": 8.0,
         "illegal_move_rate": 0.0,
         "move_timeout_rate": 0.0,
         "draws": 0,
@@ -60,6 +64,13 @@ class TournamentTest(unittest.TestCase):
             self.assertEqual(len(calls), 3)
             self.assertEqual(payload["totals"]["matchups"], 3)
             self.assertEqual(payload["totals"]["games_completed"], 6)
+            self.assertTrue(payload["recommendation"]["eligible"])
+            self.assertIn("hybrid", payload["recommendation"]["tied_ai"])
+            self.assertEqual(payload["standings"][0]["opponent_id"], "hybrid")
+            self.assertEqual(
+                payload["reproducibility"]["competition_profile"]["ai_engine"],
+                "hybrid",
+            )
             for left in ("basic", "strategic", "hybrid"):
                 for right in ("basic", "strategic", "hybrid"):
                     if left != right:
@@ -78,6 +89,15 @@ class TournamentTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             tournament.run_tournament(["basic"], games=2)
 
+    def test_require_clean_blocks_formal_tournament(self):
+        with patch.object(
+            tournament, "require_clean_worktree",
+            side_effect=ValueError("working tree is dirty"),
+        ):
+            with self.assertRaisesRegex(ValueError, "dirty"):
+                tournament.run_tournament(
+                    ["basic", "strategic"], games=2, require_clean=True
+                )
     def test_default_pool_contains_official_and_reference_models(self):
         self.assertIn("neural", tournament.DEFAULT_OPPONENTS)
         self.assertIn(

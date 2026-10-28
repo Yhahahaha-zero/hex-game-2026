@@ -77,6 +77,7 @@ def _demo_code_files(workspace_root):
         "__init__.py", "hex_game.py", "hex_board.py", "hex_engine.py",
         "hex_ai.py", "game_mode.py", "game_timer.py", "game_records.py",
         "report_export.py", "hex_notation.py", "start_game.bat",
+        "competition_profile.json",
         "requirements.txt", "requirements-ai.txt", "requirements-dev.txt",
         "pyproject.toml",
     }
@@ -130,7 +131,7 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
         for path in selected_files:
             _add(entries, workspace_root, path)
         for name in (
-            "README.md", "docs/MODEL_AND_CHECKPOINTS.md", "docs/HEX_NOTATION.md",
+            "README.md", "docs/COMPETITION_PROFILE.md", "docs/MODEL_AND_CHECKPOINTS.md", "docs/HEX_NOTATION.md",
             "docs/RECORDS.md", "docs/REPORTS.md", "docs/MEMORY_INTERFACE.md",
             "docs/MEMORY_V1.md", "docs/MEMORY_V2.md", "docs/MEMORY_V3.md",
             "docs/MEMORY_V4.md", "hex_game/.env.example",
@@ -141,8 +142,12 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
         for path in selected_files:
             _add(entries, workspace_root, path)
         _collect_tree(entries, workspace_root, workspace_root / "evaluation")
+        _add(
+            entries, workspace_root,
+            workspace_root / "hex_game" / "competition_profile.json",
+        )
         for name in (
-            "README.md", "docs/SYSTEM_ARCHITECTURE.png",
+            "README.md", "docs/COMPETITION_PROFILE.md", "docs/SYSTEM_ARCHITECTURE.png",
             "docs/SYSTEM_ARCHITECTURE.mmd", "docs/SYSTEM_ARCHITECTURE.md",
             "docs/MODEL_AND_CHECKPOINTS.md", "docs/AI_EVALUATION.md",
             "docs/P1_EVALUATION.md", "docs/TESTING.md",

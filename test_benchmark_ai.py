@@ -41,8 +41,18 @@ class BenchmarkAITest(unittest.TestCase):
             self.assertEqual(document["config"]["total_games"], 8)
             self.assertEqual(document["config"]["pairing"],
                              "AB/BA with colors swapped")
+            self.assertEqual(document["benchmark_schema_version"], 2)
             self.assertEqual(document["config"]["ai_a_metadata"]["name"], BasicAI().name)
             self.assertIn("version", document["config"]["ai_b_metadata"])
+            reproducibility = document["reproducibility"]
+            self.assertIn("code_commit", reproducibility)
+            self.assertIn("working_tree_dirty", reproducibility)
+            self.assertEqual(
+                reproducibility["competition_profile"]["ai_engine"], "hybrid"
+            )
+            self.assertEqual(len(
+                reproducibility["competition_profile"]["profile_sha256"]
+            ), 64)
             self.assertEqual(len(document["games"]), 8)
             self.assertEqual(document["summary"]["games_completed"], 8)
             self.assertEqual(document["summary"]["errors"], 0)
@@ -77,6 +87,16 @@ class BenchmarkAITest(unittest.TestCase):
             ):
                 self.assertIn(key, document["summary"])
 
+    def test_require_clean_blocks_formal_benchmark(self):
+        with patch.object(
+            benchmark, "require_clean_worktree",
+            side_effect=ValueError("working tree is dirty"),
+        ):
+            with self.assertRaisesRegex(ValueError, "dirty"):
+                benchmark.run_benchmark(
+                    "basic", "random", games=2, repeats=1, seed=7,
+                    output_dir=Path("unused"), quiet=True, require_clean=True,
+                )
     def test_odd_game_count_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with contextlib.redirect_stdout(io.StringIO()):
@@ -142,6 +162,11 @@ class BenchmarkAITest(unittest.TestCase):
                     (ai.use_distance, ai.use_double_threat, ai.use_bridges),
                     flags,
                 )
+
+    def test_competition_factory_uses_configured_time_limit(self):
+        ai = benchmark.load_ai_factory("competition")()
+        self.assertEqual(ai.time_limit_ms, 200)
+        self.assertEqual(ai.competition_profile["ai_engine"], "hybrid")
 
     def test_unknown_ai_spec_is_rejected(self):
         with self.assertRaises(ValueError):

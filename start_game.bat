@@ -62,6 +62,11 @@ if /i "%~1"=="--check" (
         echo [INFO] pygame is not installed. A normal launch will install it.
         exit /b 1
     )
+    "%PYTHON_EXE%" %PYTHON_ARGS% -B -c "from ai.competition_config import load_competition_settings; s=load_competition_settings(); print('[OK] competition profile', s.profile_name, s.ai_engine, s.search_time_limit_ms, s.hard_move_limit_ms)"
+    if errorlevel 1 (
+        echo [ERROR] competition_profile.json is invalid.
+        exit /b 1
+    )
     echo [OK] Launcher environment check completed.
     exit /b 0
 )

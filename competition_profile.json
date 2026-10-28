@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "profile_name": "hex-course-competition-baseline",
+  "profile_version": "1.0.0",
+  "ai_engine": "hybrid",
+  "search_time_limit_ms": 200,
+  "hard_move_limit_ms": 500,
+  "random_seed": 20261025,
+  "memory_mode": "off",
+  "memory_db": null,
+  "neural_model_file": "hex_model_v5.pt",
+  "neural_model_sha256": "de7ef3b80720ad6b8a8842752d916367cbd7aa2a8a861528d6cbc2e5c436a7de",
+  "benchmark_file": "evaluation/benchmark_results/official_v5_1000.json",
+  "tournament_games": 200,
+  "tournament_final_games": 1000,
+  "freeze_commit": null,
+  "notes": "Development baseline. Replace ai_engine only after the cross-AI tournament and manual review."
+}

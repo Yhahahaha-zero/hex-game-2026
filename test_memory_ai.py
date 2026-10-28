@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+from ai.competition_config import load_competition_settings
 from ai.explanation import AIExplanation
 from ai.memory.memory_ai import (
     MemoryAssistedAI,
@@ -197,12 +198,16 @@ class MemoryAssistedAITest(unittest.TestCase):
         self.assertEqual(summary["differs_from_base"], 1)
 
     def test_ai_factory_wraps_when_retrieval_enabled(self):
+        settings = replace(
+            load_competition_settings(),
+            memory_mode="shadow",
+            memory_db=str(self.db_path),
+        )
         with mock.patch.dict(os.environ, {
-            "HEX_MEMORY_RETRIEVAL": "shadow",
             "HEX_MEMORY_DB": str(self.db_path),
         }, clear=False):
             from ai.ai_factory import create_competition_ai
-            ai, error = create_competition_ai("basic")
+            ai, error = create_competition_ai("basic", settings=settings)
         self.assertIsNone(error)
         self.assertIsInstance(ai, MemoryAssistedAI)
         ai.close()

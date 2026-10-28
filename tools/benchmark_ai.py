@@ -22,10 +22,18 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from ai.competition_config import (
+    load_competition_settings,
+    reproducibility_metadata,
+    require_clean_worktree,
+)
 from hex_ai import create_ai
 from hex_match import play_game
 
-BUILTIN_AIS = ("basic", "random", "neural", "hybrid", "hybrid_llm", "strategic")
+BUILTIN_AIS = (
+    "basic", "random", "neural", "hybrid", "hybrid_llm", "strategic",
+    "competition", "profile",
+)
 DEFAULT_OUTPUT_DIR = str(PROJECT_ROOT.parent / "evaluation" / "benchmark_results")
 DEFAULT_GAMES = 500
 DEFAULT_SEED = 20261024
@@ -38,9 +46,10 @@ def _safe_filename(name):
     return cleaned or "benchmark"
 
 
-def load_ai_factory(spec):
-    """返回无参 AI 工厂。支持内置名、module:Class 和 file.py:Class。"""
+def load_ai_factory(spec, *, competition_settings=None):
+    """Return a zero-argument AI factory using the shared competition settings."""
     spec = str(spec).strip()
+    settings = competition_settings or load_competition_settings()
     memory_modes = {
         "memory-shadow:": "shadow",
         "memory-assist:": "assist",
@@ -51,7 +60,7 @@ def load_ai_factory(spec):
             base_spec = spec[len(prefix):]
             if not base_spec:
                 raise ValueError("memory wrapper requires a base AI")
-            base_factory = load_ai_factory(base_spec)
+            base_factory = load_ai_factory(base_spec, competition_settings=settings)
 
             def memory_factory():
                 from dataclasses import replace
@@ -67,16 +76,28 @@ def load_ai_factory(spec):
 
             return memory_factory
 
+    if spec in ("competition", "profile"):
+        def competition_factory():
+            from ai.ai_factory import create_competition_ai
+            ai, warning = create_competition_ai(settings=settings)
+            if warning and ai is None:
+                raise RuntimeError(warning)
+            return ai
+        return competition_factory
+
     if spec == "hybrid":
         def hybrid_factory():
             from ai.hybrid_ai import HybridAI
-            return HybridAI()
+            return HybridAI(
+                time_limit=settings.search_time_limit_ms / 1000.0,
+                seed=settings.random_seed,
+            )
         return hybrid_factory
 
     if spec == "hybrid_llm":
         def hybrid_llm_factory():
             from ai.ai_factory import create_competition_ai
-            ai, error = create_competition_ai("hybrid_llm")
+            ai, error = create_competition_ai("hybrid_llm", settings=settings)
             if error:
                 raise RuntimeError(error)
             return ai
@@ -109,7 +130,11 @@ def load_ai_factory(spec):
 
         def neural_factory():
             from ai.neural_ai import NeuralMCTSAI
-            return NeuralMCTSAI(model_path=model_path)
+            return NeuralMCTSAI(
+                model_path=model_path,
+                time_limit_ms=int(settings.search_time_limit_ms),
+                seed=settings.random_seed,
+            )
         return neural_factory
 
     if spec in ("basic", "random"):
@@ -166,6 +191,15 @@ def seed_ai(ai, seed):
 
 def _ai_name(ai):
     return str(getattr(ai, "name", type(ai).__name__))
+
+
+def _close_ai(ai):
+    closer = getattr(ai, "close", None)
+    if callable(closer):
+        try:
+            closer()
+        except Exception:
+            pass
 
 
 def _ai_metadata(ai):
@@ -291,7 +325,8 @@ def summarize_games(games, ai_a_spec, ai_b_spec):
 
 
 def _game_row(repeat, game_index, pair_index, orientation, seed,
-              ai_a, ai_b, record=None, error=None, elapsed_ms=0.0):
+              ai_a, ai_b, record=None, error=None, elapsed_ms=0.0,
+              move_time_limit_ms=500):
     row = {
         "repeat": repeat,
         "game": game_index,
@@ -320,8 +355,8 @@ def _game_row(repeat, game_index, pair_index, orientation, seed,
         "a_timeout_count": 0,
         "b_timeout_count": 0,
         "timeout_count": 0,
-        "move_time_limit_ms": record.get("move_time_limit_ms", 500)
-        if record else 500,
+        "move_time_limit_ms": record.get("move_time_limit_ms", move_time_limit_ms)
+        if record else move_time_limit_ms,
     }
     if error:
         return row
@@ -354,15 +389,24 @@ def _game_row(repeat, game_index, pair_index, orientation, seed,
 
 def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
                   output_dir=DEFAULT_OUTPUT_DIR, name=None, quiet=False,
-                  move_time_limit_ms=500):
-    """运行 AB/BA 配对评测并写入 JSON、汇总 CSV 和逐局 CSV。"""
+                  move_time_limit_ms=None, competition_settings=None,
+                  require_clean=False):
+    """运行 AB/BA 配对评测并写入可复现的 JSON/CSV。"""
     if games <= 0 or games % 2:
         raise ValueError("games 必须是大于 0 的偶数")
     if repeats <= 0:
         raise ValueError("repeats 必须大于 0")
+    if require_clean:
+        require_clean_worktree()
+    settings = competition_settings or load_competition_settings()
+    if move_time_limit_ms is None:
+        move_time_limit_ms = settings.hard_move_limit_ms
+    move_time_limit_ms = float(move_time_limit_ms)
+    if move_time_limit_ms <= 0:
+        raise ValueError("move_time_limit_ms 必须大于 0")
 
-    factory_a = load_ai_factory(ai_a_spec)
-    factory_b = load_ai_factory(ai_b_spec)
+    factory_a = load_ai_factory(ai_a_spec, competition_settings=settings)
+    factory_b = load_ai_factory(ai_b_spec, competition_settings=settings)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     stem = _safe_filename(name or datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -411,8 +455,11 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
                     error = exc
                 elapsed_ms = (time.perf_counter() - started) * 1000
                 game_index = len(repeat_games) + 1
-                row = _game_row(repeat_no, game_index, pair_index, orientation,
-                                pair_seed, ai_a, ai_b, record, error, elapsed_ms)
+                row = _game_row(
+                    repeat_no, game_index, pair_index, orientation, pair_seed,
+                    ai_a, ai_b, record, error, elapsed_ms,
+                    move_time_limit_ms=move_time_limit_ms,
+                )
                 repeat_games.append(row)
 
                 if not quiet:
@@ -425,6 +472,8 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
                         "ai_a_load_ms": round(ai_a_load_ms, 3),
                         "ai_b_load_ms": round(ai_b_load_ms, 3)})
         repeat_summaries.append(summary)
+        _close_ai(ai_b)
+        _close_ai(ai_a)
         if not quiet:
             print()
 
@@ -435,6 +484,7 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
         [summary["ai_b_load_ms"] for summary in repeat_summaries]), 3)
     overall["elapsed_seconds"] = round(time.perf_counter() - total_started, 3)
     document = {
+        "benchmark_schema_version": 2,
         "created": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "config": {
             "ai_a": ai_a_spec,
@@ -448,6 +498,7 @@ def run_benchmark(ai_a_spec, ai_b_spec, games, repeats, seed,
             "ai_a_metadata": metadata_a,
             "ai_b_metadata": metadata_b,
         },
+        "reproducibility": reproducibility_metadata(settings),
         "summary": overall,
         "repeats": repeat_summaries,
         "games": all_games,
@@ -541,30 +592,37 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Hex AI 固定种子、AB/BA 配对对比评测",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("--ai-a", default="basic",
+    parser.add_argument("--profile", default=None,
+                        help="competition_profile.json path")
+    parser.add_argument("--ai-a", default="competition",
                         help="AI A：basic、random、neural 或 module:Class")
-    parser.add_argument("--ai-b", default="random",
+    parser.add_argument("--ai-b", default="basic",
                         help="AI B：basic、random、neural 或 module:Class")
     parser.add_argument("--games", type=int, default=DEFAULT_GAMES,
                         help="每轮总对局数，必须为偶数")
     parser.add_argument("--repeats", type=int, default=1,
                         help="重复实验轮数")
-    parser.add_argument("--seed", type=int, default=DEFAULT_SEED,
+    parser.add_argument("--seed", type=int, default=None,
                         help="基础随机种子")
-    parser.add_argument("--move-time-limit-ms", type=float, default=500,
+    parser.add_argument("--move-time-limit-ms", type=float, default=None,
                         help="\u7edf\u8ba1\u5355\u6b65\u8d85\u65f6\u7684\u6beb\u79d2\u4e0a\u9650")
     parser.add_argument("--output-dir", default=DEFAULT_OUTPUT_DIR,
                         help="CSV/JSON 输出目录")
     parser.add_argument("--name", default=None,
                         help="输出文件名前缀；默认使用时间戳")
     parser.add_argument("--quiet", action="store_true", help="不显示进度和摘要")
+    parser.add_argument("--require-clean", action="store_true",
+                        help="fail when the Git worktree is dirty")
     args = parser.parse_args(argv)
 
     try:
+        settings = load_competition_settings(args.profile)
+        seed = settings.random_seed if args.seed is None else args.seed
         document, paths = run_benchmark(
             args.ai_a, args.ai_b, args.games, args.repeats,
-            args.seed, args.output_dir, args.name, args.quiet,
-            args.move_time_limit_ms)
+            seed, args.output_dir, args.name, args.quiet,
+            args.move_time_limit_ms, competition_settings=settings,
+            require_clean=args.require_clean)
     except (ValueError, TypeError, FileNotFoundError, ImportError) as exc:
         print(f"[ERROR] {exc}")
         return 2
