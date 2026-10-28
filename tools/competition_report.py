@@ -130,11 +130,16 @@ def _ablation_table(ablation):
 
 def _ablation_delta_table(ablation):
     rows = []
+    paired = ablation.get("paired_comparisons", {})
     for mode in ("shadow", "assist"):
         delta = ablation["deltas_vs_off"][mode]
+        comparison = paired.get(mode, {})
         rows.append([
             mode,
             delta.get("ai_a_win_rate"),
+            comparison.get("ci95_low_pp"),
+            comparison.get("ci95_high_pp"),
+            comparison.get("status"),
             delta.get("ai_a_red_win_rate"),
             delta.get("ai_a_blue_win_rate"),
             delta.get("ai_a_p95_move_ms"),
@@ -144,7 +149,8 @@ def _ablation_delta_table(ablation):
             delta.get("memory_applied"),
         ])
     return _table(
-        ["Mode", "Win delta pp", "Red delta pp", "Blue delta pp",
+        ["Mode", "Raw win delta pp", "Paired CI low", "Paired CI high",
+         "Paired status", "Red delta pp", "Blue delta pp",
          "P95 delta ms", "P99 delta ms", "Timeout delta pp",
          "Events", "Applied"],
         rows,
@@ -183,6 +189,7 @@ def _write_csv(path, tournament, ablation=None):
         for mode in ("off", "shadow", "assist"):
             summary = ablation["results"][mode]
             evidence = ablation["memory_evidence"][mode]
+            comparison = ablation.get("paired_comparisons", {}).get(mode, {})
             rows.append({
                 "section": "memory_ablation",
                 "name": mode,
@@ -196,11 +203,18 @@ def _write_csv(path, tournament, ablation=None):
                 "timeout_rate": summary.get("move_timeout_rate"),
                 "memory_events": evidence.get("events"),
                 "memory_applied": evidence.get("applied"),
+                "paired_games": comparison.get("games_compared"),
+                "paired_delta_pp": comparison.get("difference_pp"),
+                "paired_ci95_low_pp": comparison.get("ci95_low_pp"),
+                "paired_ci95_high_pp": comparison.get("ci95_high_pp"),
+                "paired_status": comparison.get("status", "baseline"),
             })
     fields = [
         "section", "name", "rank", "games", "wins", "losses", "errors",
         "win_rate", "red_win_rate", "blue_win_rate", "p95_move_ms",
         "p99_move_ms", "timeout_rate", "memory_events", "memory_applied",
+        "paired_games", "paired_delta_pp", "paired_ci95_low_pp",
+        "paired_ci95_high_pp", "paired_status",
     ]
     with Path(path).open("w", encoding="utf-8-sig", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)

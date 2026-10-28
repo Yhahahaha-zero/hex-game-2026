@@ -223,12 +223,13 @@ def verify_tournament(document, *, max_p99_ms=500.0, allow_dirty=False,
 
 
 def verify_ablation(document, *, max_p99_ms=500.0, allow_dirty=False,
-                    allow_timeouts=False, allow_unverified_db=False, expected_profile_sha256=None):
+                    allow_timeouts=False, allow_unverified_db=False,
+                    expected_profile_sha256=None, require_minimum_pairs=True):
     checks = {}
     errors = []
     _add_check(
         checks, errors, "ablation_schema",
-        int(document.get("ablation_schema_version", 0)) >= 1,
+        int(document.get("ablation_schema_version", 0)) >= 2,
         "unsupported ablation schema",
     )
     _common_checks(
@@ -273,6 +274,42 @@ def verify_ablation(document, *, max_p99_ms=500.0, allow_dirty=False,
                "one or more ablation modes contain errors or timeouts")
     _add_check(checks, errors, "latency_available", latency_ok,
                "ablation latency metrics are missing or exceed the limit")
+    minimum_pairs = int(document.get("config", {}).get("minimum_pairs", 0))
+    if require_minimum_pairs:
+        _add_check(
+            checks, errors, "minimum_pairs_configured",
+            minimum_pairs >= 2,
+            "memory ablation minimum_pairs is missing or invalid",
+        )
+    paired = document.get("paired_comparisons", {})
+    paired_complete = set(paired) == {"shadow", "assist"}
+    paired_valid = paired_complete
+    if paired_complete:
+        for mode in ("shadow", "assist"):
+            comparison = paired.get(mode, {})
+            if comparison.get("method") != "paired_bootstrap":
+                paired_valid = False
+            if int(comparison.get("games_compared", -1)) != games:
+                paired_valid = False
+            if (require_minimum_pairs
+                    and int(comparison.get("games_compared", 0)) < minimum_pairs):
+                paired_valid = False
+            for key in ("ci95_low_pp", "ci95_high_pp", "difference_pp"):
+                if comparison.get(key) is None:
+                    paired_valid = False
+            if comparison.get("status") not in (
+                "insufficient_pairs", "significant_improvement",
+                "significant_regression", "no_significant_difference",
+            ):
+                paired_valid = False
+    _add_check(
+        checks, errors, "paired_comparisons_present", paired_complete,
+        "paired shadow/assist comparisons are missing",
+    )
+    _add_check(
+        checks, errors, "paired_comparisons_valid", paired_valid,
+        "paired bootstrap metrics are invalid or incomplete",
+    )
     _add_check(
         checks, errors, "memory_configs_present",
         set(document.get("memory_configs", {})) == {"off", "shadow", "assist"},
@@ -294,7 +331,8 @@ def detect_kind(document):
 
 def verify_document(document, *, max_p99_ms=500.0, allow_dirty=False,
                     allow_timeouts=False, allow_unverified_db=False,
-                    require_recommendation=True, expected_profile_sha256=None):
+                    require_recommendation=True, expected_profile_sha256=None,
+                    require_minimum_pairs=True):
     kind = detect_kind(document)
     if kind == "benchmark":
         result = verify_benchmark(
@@ -315,6 +353,7 @@ def verify_document(document, *, max_p99_ms=500.0, allow_dirty=False,
             allow_timeouts=allow_timeouts,
             allow_unverified_db=allow_unverified_db,
             expected_profile_sha256=expected_profile_sha256,
+            require_minimum_pairs=require_minimum_pairs,
         )
     else:
         raise ValueError("unrecognized competition result document")
@@ -345,6 +384,7 @@ def main(argv=None):
     parser.add_argument("--allow-unverified-db", action="store_true")
     parser.add_argument("--allow-no-recommendation", action="store_true")
     parser.add_argument("--allow-profile-mismatch", action="store_true")
+    parser.add_argument("--allow-minimum-pairs", action="store_true")
     args = parser.parse_args(argv)
     try:
         settings = load_competition_settings(args.profile)
@@ -370,6 +410,7 @@ def main(argv=None):
                     None if args.allow_profile_mismatch
                     else settings.profile_sha256
                 ),
+                require_minimum_pairs=not args.allow_minimum_pairs,
             )
             result["path"] = str(path.resolve())
             reports.append(result)

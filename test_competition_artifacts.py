@@ -120,8 +120,8 @@ def ablation_document(dirty=False):
         "ai_a_p99_move_ms": 190.0,
     }
     return {
-        "ablation_schema_version": 1,
-        "config": {"games": 2, "base_ai": "hybrid", "opponent": "basic"},
+        "ablation_schema_version": 2,
+        "config": {"games": 2, "minimum_pairs": 2, "base_ai": "hybrid", "opponent": "basic"},
         "provenance": {"verified": True, "db_sha256": "c" * 64},
         "reproducibility": reproducibility(dirty),
         "results": {
@@ -129,7 +129,17 @@ def ablation_document(dirty=False):
             "shadow": dict(summary),
             "assist": dict(summary),
         },
-        "memory_configs": {
+        "paired_comparisons": {
+            mode: {
+                "method": "paired_bootstrap",
+                "games_compared": 2,
+                "difference_pp": 0.0,
+                "ci95_low_pp": -50.0,
+                "ci95_high_pp": 50.0,
+                "status": "no_significant_difference",
+            }
+            for mode in ("shadow", "assist")
+        },        "memory_configs": {
             "off": {"mode": "off"},
             "shadow": {"mode": "shadow"},
             "assist": {"mode": "assist"},
@@ -198,6 +208,7 @@ class CompetitionArtifactsTest(unittest.TestCase):
             self.assertIn("HybridAI", report)
             self.assertIn("Memory Ablation", report)
             self.assertIn("assist", report)
+            self.assertIn("Paired status", report)
             self.assertTrue(paths["csv"].is_file())
             self.assertTrue(paths["validation"].is_file())
 
