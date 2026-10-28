@@ -43,6 +43,7 @@ class PackageReleaseTest(unittest.TestCase):
         self.assertIn("docs/MEMORY_V3.md", archive)
         self.assertIn("docs/MEMORY_V4.md", archive)
         self.assertIn("docs/COMPETITION_PROFILE.md", archive)
+        self.assertIn("docs/COMPETITION_BASELINE.md", archive)
         self.assertIn("hex_game/competition_profile.json", archive)
         self.assertNotIn("hex_game/hex_game.py", archive)
 
