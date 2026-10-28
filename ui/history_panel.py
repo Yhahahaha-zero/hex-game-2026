@@ -204,13 +204,13 @@ class HistoryPanel:
             y += 23
 
     def _draw_status(self, screen, status):
-        status_y = WINDOW_H - 94
+        status_y = WINDOW_H - 126
         pygame.draw.line(screen, PANEL_LINE, (BOARD_W + 12, status_y - 14),
                          (BOARD_W + PANEL_W - 12, status_y - 14), 1)
         self._text(screen, "AI 状态", (BOARD_W + 16, status_y),
                    self.body_font, theme.GOLD_DEEP)
-        for line_no, part in enumerate(str(status).splitlines()[:3]):
-            self._text(screen, part[:20],
+        for line_no, part in enumerate(str(status).splitlines()[:4]):
+            self._text(screen, part[:30],
                        (BOARD_W + 16, status_y + 24 + line_no * 20),
                        self.body_font, theme.DIM_CLR)
 

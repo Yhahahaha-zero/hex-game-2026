@@ -7,6 +7,7 @@ import pygame
 from ai.worker import AIWorker
 from ai.analysis_worker import AnalysisWorker
 from ai.board_observation import build_engine_observation
+from ai.competition_config import load_competition_settings
 from ai.llm_advisor import LLMAdvisor
 from ai.llm_client import LLMDisabledError, create_llm_client
 from ai.llm_config import load_llm_config
@@ -141,6 +142,23 @@ class HexGame:
         self.human = None
         self.ai = None
         self.ai_status_message = ""
+        self.competition_profile = None
+        self.competition_profile_error = ""
+        self.competition_profile_warning = ""
+        self.last_ai_name = ""
+        try:
+            self.competition_profile = load_competition_settings().metadata()
+            engine = str(self.competition_profile.get("ai_engine", ""))
+            self.last_ai_name = {
+                "basic": "BasicAI",
+                "strategic": "StrategicAI",
+                "hybrid": "HybridAI",
+                "hybrid_llm": "HybridAI+LLM",
+                "neural": "NeuralMCTS",
+            }.get(engine, engine)
+        except Exception as exc:
+            self.competition_profile_error = str(exc)
+            self.ai_status_message = "AI 配置异常，已回退基础 AI"
         self.ai_request_id = 0
         self.ai_worker = None
         self._retired_workers = []
@@ -1012,14 +1030,20 @@ class HexGame:
             return
         if result.ai is not None:
             self.ai = result.ai
-        self.last_search_stats = tuple(result.search_stats or ())
-        self.last_ai_explanation = result.explanation
+        if result.competition_profile:
+            self.competition_profile = dict(result.competition_profile)
+            self.competition_profile_error = ""
+        self.last_ai_name = str(result.ai_name or "")
+        warning = result.configuration_warning or result.init_error or ""
         if result.init_error:
             print(f"[AI] {result.init_error}")
-            self.ai_status_message = "模型不可用，已回退基础 AI"
         if result.inference_error:
             print(f"[AI] {result.inference_error}")
-            self.ai_status_message = "模型推理失败，已回退基础 AI"
+            fallback_warning = "模型推理失败，已回退基础 AI"
+            warning = f"{warning}; {fallback_warning}" if warning else fallback_warning
+        self.competition_profile_warning = warning
+        self.last_search_stats = tuple(result.search_stats or ())
+        self.last_ai_explanation = result.explanation
         if result.fallback_error:
             print(f"[AI] {result.fallback_error}")
             self.ai_status_message = "AI 执行失败"
@@ -1277,6 +1301,34 @@ class HexGame:
         if self.vision_panel.visible:
             self.vision_panel.draw(self.screen)
 
+    def _competition_status_lines(self, dynamic=""):
+        profile = self.competition_profile or {}
+        if self.competition_profile_error:
+            return [
+                "AI 配置异常",
+                self.competition_profile_error,
+                "检查 competition_profile.json",
+                dynamic or "已回退基础 AI",
+            ]
+        if not profile:
+            return ["AI 配置未加载", "-", "-", dynamic]
+        engine = str(profile.get("ai_engine", "-"))
+        mode = str(profile.get("memory_mode", "-"))
+        profile_name = str(profile.get("profile_name", "-"))
+        model_hash = str(profile.get("neural_model_sha256", "") or "")[:8] or "-"
+        search_ms = int(float(profile.get("search_time_limit_ms", 0) or 0))
+        hard_ms = int(float(profile.get("hard_move_limit_ms", 0) or 0))
+        ai_name = self.last_ai_name or engine
+        detail = str(dynamic or "").replace("\n", " · ")
+        warning = str(self.competition_profile_warning or "").strip()
+        if warning:
+            detail = f"{warning} · {detail}" if detail else warning
+        return [
+            f"AI {ai_name} · {engine}",
+            profile_name,
+            f"mem {mode} · model {model_hash}",
+            f"S {search_ms} / H {hard_ms} ms" + (f" · {detail}" if detail else ""),
+        ]
     def _panel_status(self):
         if self.state == S_REPLAY and self.replay is not None:
             return (
@@ -1285,8 +1337,12 @@ class HexGame:
                 "← → 切换 / Esc 返回"
             )
         progress = self._ai_progress_text()
-        parts = [part for part in (self.ai_status_message, progress, self.panel_message) if part]
-        return "\n".join(parts)
+        parts = [
+            part for part in (
+                self.ai_status_message, progress, self.panel_message
+            ) if part
+        ]
+        return "\n".join(self._competition_status_lines(" · ".join(parts)))
 
     def draw_hud(self):
         self.overlay.draw_hud()

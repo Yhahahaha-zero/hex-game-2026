@@ -27,6 +27,8 @@ class AIResult:
     ai_name: Optional[str] = None
     ai_version: Optional[str] = None
     model_sha256: Optional[str] = None
+    competition_profile: Optional[dict] = None
+    configuration_warning: Optional[str] = None
     elapsed_ms: float = 0.0
 
     @property
@@ -54,6 +56,11 @@ def _ai_metadata(ai):
     if not model_sha256 and isinstance(selection, dict):
         model_sha256 = str(selection.get("sha256", "") or "")
     return name, version or None, model_sha256 or None
+
+
+def _competition_metadata(ai):
+    metadata = getattr(ai, "competition_profile", None)
+    return dict(metadata) if isinstance(metadata, dict) else None
 
 
 def _default_ai_loader():
@@ -138,6 +145,7 @@ class AIWorker:
                        inference_error=None, fallback_error=None):
         self._update_progress(phase="cancelled", best_move=None)
         ai_name, ai_version, model_sha256 = _ai_metadata(selected_ai)
+        competition_profile = _competition_metadata(selected_ai)
         progress = self.progress
         self._result = AIResult(
             request_id=self.request_id,
@@ -153,6 +161,8 @@ class AIWorker:
             ai_name=ai_name,
             ai_version=ai_version,
             model_sha256=model_sha256,
+            competition_profile=competition_profile,
+            configuration_warning=init_error,
         )
 
     def _attach_cancel_event(self, selected_ai):
@@ -167,11 +177,13 @@ class AIWorker:
         inference_error = None
         fallback_error = None
         selected_ai = self.ai
+        competition_profile = _competition_metadata(selected_ai)
 
         if selected_ai is None:
             self._update_progress(phase="loading")
             try:
                 selected_ai, init_error = self._ai_loader()
+                competition_profile = _competition_metadata(selected_ai)
             except Exception as exc:
                 init_error = str(exc)
                 selected_ai = BasicAI()
@@ -262,6 +274,8 @@ class AIWorker:
             ai_name=ai_name,
             ai_version=ai_version,
             model_sha256=model_sha256,
+            competition_profile=competition_profile,
+            configuration_warning=init_error,
             elapsed_ms=elapsed_ms,
         )
 

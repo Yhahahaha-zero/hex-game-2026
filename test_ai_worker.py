@@ -21,6 +21,17 @@ class StaticAI:
         return self.move, self.reason
 
 
+class ProfileAI(StaticAI):
+    name = "ProfileAI"
+    competition_profile = {
+        "profile_name": "test-profile",
+        "ai_engine": "hybrid",
+        "memory_mode": "off",
+        "neural_model_sha256": "d" * 64,
+        "search_time_limit_ms": 200,
+        "hard_move_limit_ms": 500,
+    }
+
 class BlockingAI:
     name = "阻塞AI"
 
@@ -105,6 +116,25 @@ class AIWorkerTest(unittest.TestCase):
         self.assertEqual(board.grid, before_grid)
         self.assertEqual(board.history, before_history)
 
+    def test_worker_returns_competition_profile_metadata(self):
+        worker = AIWorker(HexBoard(), RED, 13, ai=ProfileAI())
+        worker.start()
+        worker.join(2.0)
+        result = worker.result
+        self.assertEqual(result.competition_profile["profile_name"], "test-profile")
+        self.assertEqual(result.competition_profile["ai_engine"], "hybrid")
+        self.assertIsNone(result.configuration_warning)
+
+    def test_worker_surfaces_loader_warning_and_profile(self):
+        worker = AIWorker(
+            HexBoard(), RED, 14,
+            ai_loader=lambda: (ProfileAI(), "HEX_AI_ENGINE ignored"),
+        )
+        worker.start()
+        worker.join(2.0)
+        result = worker.result
+        self.assertEqual(result.configuration_warning, "HEX_AI_ENGINE ignored")
+        self.assertEqual(result.competition_profile["profile_name"], "test-profile")
     def test_worker_falls_back_when_ai_raises(self):
         worker = AIWorker(HexBoard(), BLUE, 8, ai=FailingAI())
         worker.start()

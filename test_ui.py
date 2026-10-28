@@ -52,6 +52,62 @@ class UITest(unittest.TestCase):
             game.exit_replay()
             self.assertEqual(game.state, hg.S_PLAY)
 
+    def test_ui_displays_competition_profile_status(self):
+        import hex_game as hg
+
+        game = hg.HexGame()
+        status = game._panel_status()
+        profile = hg.load_competition_settings()
+        self.assertIn(profile.profile_name, status)
+        self.assertIn(profile.ai_engine, status)
+        self.assertIn(f"mem {profile.memory_mode}", status)
+        self.assertIn("200", status)
+        self.assertIn("500", status)
+        self.assertIn(profile.neural_model_sha256[:8], status)
+        game.draw()
+
+    def test_ui_displays_configuration_error(self):
+        import hex_game as hg
+
+        with patch.object(
+            hg, "load_competition_settings",
+            side_effect=RuntimeError("profile broken"),
+        ):
+            game = hg.HexGame()
+        status = game._panel_status()
+        self.assertIn("AI 配置异常", status)
+        self.assertIn("profile broken", status)
+        self.assertIn("competition_profile.json", status)
+
+    def test_ui_updates_profile_and_warning_from_ai_result(self):
+        import hex_game as hg
+        from ai.worker import AIResult
+
+        game = hg.HexGame()
+        game.start_mode(GameMode.HUMAN_VS_HUMAN)
+        color = game.engine.current_color
+        result = AIResult(
+            request_id=game.ai_request_id,
+            color=color,
+            move=(5, 5),
+            reason="profile-test",
+            ai_name="ConfiguredAI",
+            competition_profile={
+                "profile_name": "runtime-profile",
+                "ai_engine": "strategic",
+                "memory_mode": "assist",
+                "neural_model_sha256": "e" * 64,
+                "search_time_limit_ms": 120,
+                "hard_move_limit_ms": 400,
+            },
+            configuration_warning="environment override ignored",
+        )
+        game._consume_ai_result(result)
+        status = game._panel_status()
+        self.assertIn("ConfiguredAI", status)
+        self.assertIn("runtime-profile", status)
+        self.assertIn("mem assist", status)
+        self.assertIn("environment override ignored", status)
     def test_ai_explanation_panel_renders(self):
         import hex_game as hg
 
