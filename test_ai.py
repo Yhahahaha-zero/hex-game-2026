@@ -3,9 +3,11 @@
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from ai.ai_factory import create_competition_ai
+from ai.competition_config import load_competition_settings
 from ai.hybrid_ai import HybridAI
 from ai.neural_ai import (NeuralMCTSAI, choose_tactical_move,
                          create_ai_with_fallback, load_selected_model,
@@ -70,7 +72,8 @@ class AIContractTest(unittest.TestCase):
         self.assertEqual(explanation["search_type"], "rule")
 
     def test_competition_ai_defaults_to_hybrid(self):
-        ai, error = create_competition_ai("hybrid")
+        settings = replace(load_competition_settings(), memory_mode="off")
+        ai, error = create_competition_ai("hybrid", settings=settings)
         self.assertIsInstance(ai, HybridAI)
         self.assertIsNone(error)
 
@@ -105,7 +108,8 @@ class AIContractTest(unittest.TestCase):
         from unittest.mock import patch
 
         with patch.dict(os.environ, {"LLM_ENABLED": "0"}):
-            ai, error = create_competition_ai("hybrid_llm")
+            settings = replace(load_competition_settings(), memory_mode="off")
+            ai, error = create_competition_ai("hybrid_llm", settings=settings)
         self.assertIsInstance(ai, HybridAI)
         self.assertIn("LLM_ENABLED=0", error)
 
@@ -120,7 +124,8 @@ class AIContractTest(unittest.TestCase):
             "LLM_BASE_URL": "https://example.test/v1",
         }
         with patch.dict(os.environ, env):
-            ai, error = create_competition_ai("hybrid_llm")
+            settings = replace(load_competition_settings(), memory_mode="off")
+            ai, error = create_competition_ai("hybrid_llm", settings=settings)
         self.assertIsInstance(ai, LLMAssistedAI)
         self.assertIsNone(error)
 

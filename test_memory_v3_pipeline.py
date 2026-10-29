@@ -10,7 +10,12 @@ from ai.memory.outcomes import (
     attribute_match_outcomes,
     summarize_outcomes,
 )
-from ai.memory.pipeline import MemoryLearningPipeline, MemoryPipelineWorker
+from ai.memory.pipeline import (
+    MemoryLearningPipeline,
+    MemoryPipelineWorker,
+    NullMemoryPipelineWorker,
+    create_memory_pipeline_from_env,
+)
 from ai.memory.schema import RETRIEVAL_VERSION
 from ai.memory.store import ExperienceStore, RetrievalEventRecord
 from memory_test_support import collect_scripted_match
@@ -109,6 +114,24 @@ class MemoryV3PipelineTest(unittest.TestCase):
         ])
         self.assertEqual(code, 0)
         self.assertTrue(policy_path.is_file())
+
+    def test_pipeline_reads_settings_from_env_file(self):
+        env_file = Path(self.temp_dir.name) / ".env.local"
+        env_file.write_text(
+            "HEX_MEMORY_PIPELINE=full\n"
+            "HEX_MEMORY_PIPELINE_QUEUE_SIZE=4\n"
+            f"HEX_MEMORY_DB={self.db_path}\n",
+            encoding="utf-8",
+        )
+        worker = create_memory_pipeline_from_env(env_file=env_file, environ={})
+        try:
+            self.assertIsInstance(worker, MemoryPipelineWorker)
+            self.assertTrue(worker.enabled)
+        finally:
+            worker.close()
+        env_file.write_text("HEX_MEMORY_PIPELINE=off\n", encoding="utf-8")
+        disabled = create_memory_pipeline_from_env(env_file=env_file, environ={})
+        self.assertIsInstance(disabled, NullMemoryPipelineWorker)
 
     def test_background_worker_processes_submitted_match(self):
         match_id = collect_scripted_match(self.db_path)

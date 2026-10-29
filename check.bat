@@ -3,6 +3,12 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 set "PYTHONUTF8=1"
 set "PYTHONDONTWRITEBYTECODE=1"
+rem Keep automated tests isolated from the live learning profile and experience DB.
+set "HEX_COMPETITION_PROFILE=%CD%\competition_profile.test.json"
+set "HEX_MEMORY_CAPTURE=off"
+set "HEX_MEMORY_PIPELINE=off"
+set "HEX_MEMORY_RETRIEVAL=off"
+set "HEX_MEMORY_DB=%TEMP%\hex_game_test_memory.sqlite3"
 set "PYTHON_EXE="
 set "PYTHON_ARGS="
 if defined HEX_PYTHON if exist "%HEX_PYTHON%" (

@@ -152,6 +152,7 @@ def collect_release_files(profile, workspace_root=WORKSPACE_ROOT):
             "docs/MODEL_AND_CHECKPOINTS.md", "docs/AI_EVALUATION.md",
             "docs/P1_EVALUATION.md", "docs/TESTING.md",
             "docs/COMPETITION_BASELINE.md",
+            "docs/LEARNING_ACTIVATION.md",
             "docs/MEMORY_INTERFACE.md", "docs/MEMORY_V1.md",
             "docs/MEMORY_V2.md", "docs/MEMORY_V3.md", "docs/MEMORY_V4.md",
         ):

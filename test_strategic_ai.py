@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """StrategicAI 的确定性战术、桥关键点和消融开关测试。"""
 import unittest
+from dataclasses import replace
 
 from ai.ai_factory import create_competition_ai
+from ai.competition_config import load_competition_settings
 from ai.strategic_ai import StrategicAI
 from hex_board import BLUE, HexBoard, RED
 
@@ -80,7 +82,8 @@ class StrategicAITest(unittest.TestCase):
         self.assertNotEqual(reason, "桥关键点")
 
     def test_factory_and_board_immutability(self):
-        ai, error = create_competition_ai("strategic")
+        settings = replace(load_competition_settings(), memory_mode="off")
+        ai, error = create_competition_ai("strategic", settings=settings)
         self.assertIsInstance(ai, StrategicAI)
         self.assertIsNone(error)
         board = self._double_bridge_board()

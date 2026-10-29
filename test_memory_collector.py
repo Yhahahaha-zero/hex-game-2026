@@ -86,7 +86,10 @@ class MemoryCollectorTest(unittest.TestCase):
         collector.mark_game_over(RED, "connect")
 
     def test_off_mode_returns_noop_collector(self):
-        collector = create_memory_collector_from_env()
+        collector = create_memory_collector_from_env(
+            env_file=Path(self.temp_dir.name) / "missing.env",
+            environ={},
+        )
         self.assertFalse(collector.enabled)
         self.assertFalse(collector.accept_match())
 

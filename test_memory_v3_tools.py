@@ -4,10 +4,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from ai.memory.store import ExperienceStore
 from memory_test_support import collect_scripted_match
-from tools import memory_cycle, memory_status
+from tools import generate_memory_selfplay, memory_cycle, memory_status
 
 
 class MemoryV3ToolsTest(unittest.TestCase):
@@ -32,6 +33,30 @@ class MemoryV3ToolsTest(unittest.TestCase):
                     for row in store.list_decisions(limit=1000)
                 ))
 
+    def test_selfplay_report_creates_nested_output_directory(self):
+        class FakeResult:
+            def as_dict(self):
+                return {"match_id": "match-1", "games": 2}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            output = root / "nested" / "reports" / "selfplay.json"
+            with patch.object(
+                generate_memory_selfplay,
+                "run_selfplay_series",
+                return_value=[FakeResult()],
+            ), patch.object(
+                generate_memory_selfplay,
+                "load_ai_factory",
+                return_value=lambda: object(),
+            ):
+                code = generate_memory_selfplay.main([
+                    "--db", str(root / "memory.sqlite3"),
+                    "--matches", "1",
+                    "--output", str(output),
+                ])
+            self.assertEqual(code, 0)
+            self.assertTrue(output.is_file())
     def test_status_command_writes_report(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

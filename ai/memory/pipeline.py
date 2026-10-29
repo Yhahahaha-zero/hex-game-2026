@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 
+from ai.memory.collector import _env_setting, _read_env_file
 from ai.memory.features import FEATURE_VERSION, features_json
 from ai.memory.outcomes import attribute_match_outcomes
 from ai.memory.schema import memory_db_path
@@ -219,16 +220,26 @@ class MemoryPipelineWorker:
         }
 
 
-def create_memory_pipeline_from_env(*, store_factory=None):
-    mode = str(os.environ.get("HEX_MEMORY_PIPELINE", "off")).strip().lower()
+def create_memory_pipeline_from_env(*, store_factory=None, env_file=None, environ=None):
+    root = Path(__file__).resolve().parents[2]
+    env_path = Path(env_file) if env_file is not None else root / ".env.local"
+    file_values = _read_env_file(env_path)
+    environment = os.environ if environ is None else environ
+    mode = _env_setting(
+        file_values, environment, "HEX_MEMORY_PIPELINE", "off"
+    ).lower()
     if mode not in PIPELINE_MODES or mode == "off":
         return NullMemoryPipelineWorker()
     if store_factory is None:
-        db_path = str(memory_db_path(os.environ))
+        configured_db = _env_setting(file_values, environment, "HEX_MEMORY_DB", "")
+        db_path = configured_db or str(memory_db_path(environment))
         store_factory = lambda: ExperienceStore(db_path).open()
+    queue_size = int(_env_setting(
+        file_values, environment, "HEX_MEMORY_PIPELINE_QUEUE_SIZE", "32"
+    ))
     worker = MemoryPipelineWorker(
         MemoryLearningPipeline(store_factory, mode=mode),
-        queue_size=int(os.environ.get("HEX_MEMORY_PIPELINE_QUEUE_SIZE", "32")),
+        queue_size=queue_size,
     )
     worker.start()
     return worker

@@ -48,7 +48,9 @@ def main(argv=None):
     }
     text = json.dumps(document, ensure_ascii=False, indent=2)
     if args.output:
-        Path(args.output).write_text(text + "\n", encoding="utf-8")
+        output = Path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(text + "\n", encoding="utf-8")
     print(text)
     return 0
 

@@ -3,12 +3,14 @@
 import contextlib
 import csv
 import io
+from dataclasses import replace
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from ai.competition_config import load_competition_settings
 from hex_ai import BasicAI
 from hex_board import HexBoard, IllegalMoveError
 from tools import benchmark_ai as benchmark
@@ -164,7 +166,8 @@ class BenchmarkAITest(unittest.TestCase):
                 )
 
     def test_competition_factory_uses_configured_time_limit(self):
-        ai = benchmark.load_ai_factory("competition")()
+        settings = replace(load_competition_settings(), memory_mode="off")
+        ai = benchmark.load_ai_factory("competition", competition_settings=settings)()
         self.assertEqual(ai.time_limit_ms, 200)
         self.assertEqual(ai.competition_profile["ai_engine"], "hybrid")
 

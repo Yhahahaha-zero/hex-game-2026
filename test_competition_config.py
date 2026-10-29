@@ -14,25 +14,33 @@ from ai.competition_config import (
     require_clean_worktree,
 )
 from ai.hybrid_ai import HybridAI
+from ai.memory.memory_ai import MemoryAssistedAI
 
 
 class CompetitionConfigTest(unittest.TestCase):
     def test_default_profile_loads_and_matches_selected_model(self):
-        settings = load_competition_settings()
+        settings = load_competition_settings(
+            Path(__file__).with_name("competition_profile.json")
+        )
         self.assertEqual(settings.ai_engine, "hybrid")
         self.assertEqual(settings.search_time_limit_ms, 200.0)
         self.assertEqual(settings.hard_move_limit_ms, 500.0)
         self.assertEqual(settings.random_seed, 20261025)
-        self.assertEqual(settings.memory_mode, "off")
+        self.assertEqual(settings.memory_mode, "shadow")
         self.assertEqual(len(settings.profile_sha256), 64)
         self.assertTrue(settings.neural_model_path.is_file())
 
     def test_environment_engine_cannot_silently_override_profile(self):
         with patch.dict(os.environ, {"HEX_AI_ENGINE": "basic"}):
-            ai, warning = create_competition_ai()
-        self.assertIsInstance(ai, HybridAI)
+            settings = load_competition_settings(
+                Path(__file__).with_name("competition_profile.json")
+            )
+            ai, warning = create_competition_ai(settings=settings)
+        self.assertIsInstance(ai, MemoryAssistedAI)
+        self.assertIsInstance(ai.base_ai, HybridAI)
         self.assertIn("ignored", warning)
         self.assertEqual(ai.competition_profile["ai_engine"], "hybrid")
+        ai.close()
 
     def test_dirty_worktree_is_rejected_for_formal_runs(self):
         with patch("ai.competition_config._git_output", return_value=" M file.py"):
