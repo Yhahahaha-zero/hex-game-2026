@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "record_id": "f1f16d3a-3daf-4758-8ff6-d102d0189eb0",
+  "saved_at": "2026-10-31T17:09:44",
+  "mode": {
+    "key": 3,
+    "name": "人机对战 · 玩家执蓝"
+  },
+  "player_labels": {
+    "玩家1": "玩家1",
+    "玩家2": "玩家2"
+  },
+  "teams": {
+    "player1": "玩家1",
+    "player2": "玩家2"
+  },
+  "board": {
+    "rows": 11,
+    "cols": 11
+  },
+  "state": "playing",
+  "match_score": {
+    "玩家1": 0,
+    "玩家2": 0
+  },
+  "match_winner": null,
+  "timers_seconds": {
+    "1": 0.36546679999992193,
+    "2": 0.11372499999924912
+  },
+  "games": [
+    {
+      "game": 1,
+      "moves": [
+        {
+          "game": 1,
+          "no": 1,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "6B",
+          "q": 1,
+          "r": 5,
+          "ms": 0.0,
+          "reason": "常规落子"
+        }
+      ],
+      "result": null
+    }
+  ],
+  "record_sha256": "81b7c647c90d11be3782fe785f8720614798917e586b2eb89e082d8307f469b0"
+}

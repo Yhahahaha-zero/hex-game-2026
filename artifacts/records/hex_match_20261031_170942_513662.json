@@ -1,0 +1,551 @@
+{
+  "schema_version": 2,
+  "record_id": "92e4952c-b204-4309-a3ee-86be6e72dd52",
+  "saved_at": "2026-10-31T17:09:42",
+  "mode": {
+    "key": 3,
+    "name": "人机对战 · 玩家执蓝"
+  },
+  "player_labels": {
+    "玩家1": "玩家1",
+    "玩家2": "玩家2"
+  },
+  "teams": {
+    "player1": "玩家1",
+    "player2": "玩家2"
+  },
+  "board": {
+    "rows": 11,
+    "cols": 11
+  },
+  "state": "game_over",
+  "match_score": {
+    "玩家1": 0,
+    "玩家2": 2
+  },
+  "match_winner": null,
+  "timers_seconds": {
+    "1": 4.67810279999685,
+    "2": 4.139042800003153
+  },
+  "games": [
+    {
+      "game": 1,
+      "moves": [
+        {
+          "game": 1,
+          "no": 1,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "2G",
+          "q": 6,
+          "r": 1,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 2,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7A",
+          "q": 0,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 3,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "3F",
+          "q": 5,
+          "r": 2,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 4,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7B",
+          "q": 1,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 5,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "4E",
+          "q": 4,
+          "r": 3,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 6,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7C",
+          "q": 2,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 7,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "1H",
+          "q": 7,
+          "r": 0,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 8,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7D",
+          "q": 3,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 9,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "1G",
+          "q": 6,
+          "r": 0,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 10,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7E",
+          "q": 4,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 11,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "5E",
+          "q": 4,
+          "r": 4,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 12,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7F",
+          "q": 5,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 13,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "2F",
+          "q": 5,
+          "r": 1,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 14,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7G",
+          "q": 6,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 15,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "1F",
+          "q": 5,
+          "r": 0,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 16,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "7H",
+          "q": 7,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 17,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "4F",
+          "q": 5,
+          "r": 3,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 18,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "6I",
+          "q": 8,
+          "r": 5,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 19,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "5D",
+          "q": 3,
+          "r": 4,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 1,
+          "no": 20,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "6J",
+          "q": 9,
+          "r": 5,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 1,
+          "no": 21,
+          "color": 1,
+          "side": "玩家1",
+          "cell": "6K",
+          "q": 10,
+          "r": 5,
+          "ms": 0.0,
+          "reason": "紧急防守"
+        },
+        {
+          "game": 1,
+          "no": 22,
+          "color": 2,
+          "side": "玩家2",
+          "cell": "5K",
+          "q": 10,
+          "r": 4,
+          "ms": 0.0,
+          "reason": ""
+        }
+      ],
+      "result": {
+        "game": 1,
+        "winner_color": 2,
+        "winner_side": "玩家2",
+        "reason": "connect"
+      }
+    },
+    {
+      "game": 2,
+      "moves": [
+        {
+          "game": 2,
+          "no": 1,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "1G",
+          "q": 6,
+          "r": 0,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 2,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "8G",
+          "q": 6,
+          "r": 7,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 3,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "2G",
+          "q": 6,
+          "r": 1,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 4,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "9F",
+          "q": 5,
+          "r": 8,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 5,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "3G",
+          "q": 6,
+          "r": 2,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 6,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "8H",
+          "q": 7,
+          "r": 7,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 7,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "4F",
+          "q": 5,
+          "r": 3,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 8,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "9G",
+          "q": 6,
+          "r": 8,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 9,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "6E",
+          "q": 4,
+          "r": 5,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 10,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "9H",
+          "q": 7,
+          "r": 8,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 11,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "5E",
+          "q": 4,
+          "r": 4,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 12,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "9E",
+          "q": 4,
+          "r": 8,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 13,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "7E",
+          "q": 4,
+          "r": 6,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 14,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "7H",
+          "q": 7,
+          "r": 6,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 15,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "8D",
+          "q": 3,
+          "r": 7,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 16,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "8F",
+          "q": 5,
+          "r": 7,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 17,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "9D",
+          "q": 3,
+          "r": 8,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 18,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "7I",
+          "q": 8,
+          "r": 6,
+          "ms": 0.0,
+          "reason": "常规落子"
+        },
+        {
+          "game": 2,
+          "no": 19,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "10D",
+          "q": 3,
+          "r": 9,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 20,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "11D",
+          "q": 3,
+          "r": 10,
+          "ms": 0.0,
+          "reason": "紧急防守"
+        },
+        {
+          "game": 2,
+          "no": 21,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "10E",
+          "q": 4,
+          "r": 9,
+          "ms": 0.0,
+          "reason": ""
+        },
+        {
+          "game": 2,
+          "no": 22,
+          "color": 2,
+          "side": "玩家1",
+          "cell": "11C",
+          "q": 2,
+          "r": 10,
+          "ms": 0.0,
+          "reason": "紧急防守"
+        },
+        {
+          "game": 2,
+          "no": 23,
+          "color": 1,
+          "side": "玩家2",
+          "cell": "11E",
+          "q": 4,
+          "r": 10,
+          "ms": 0.0,
+          "reason": ""
+        }
+      ],
+      "result": {
+        "game": 2,
+        "winner_color": 1,
+        "winner_side": "玩家2",
+        "reason": "connect"
+      }
+    }
+  ],
+  "record_sha256": "9e4ef0fc80e78f23601d78347b932e47f9c3dcf2057b187308095994140ba391"
+}
